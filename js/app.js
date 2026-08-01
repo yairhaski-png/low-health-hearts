@@ -2,8 +2,15 @@
   "use strict";
 
   const KEY = "kesher-state";
-  const SCHEMA = 4;
+  const SCHEMA = 5;
   const CHART_DAYS = 14;
+
+  const DEFAULT_ROUTINE = [
+    { id: "wake", label: "השכמה", time: "" },
+    { id: "morn", label: "אימון בוקר", time: "" },
+    { id: "eve", label: "אימון ערב", time: "" },
+    { id: "sleep", label: "שינה", time: "" },
+  ];
 
   const today = () => new Date().toISOString().slice(0, 10);
   const dayGap = (a, b) =>
@@ -51,6 +58,8 @@
       log: {},
       bestStreak: 0,
       remindOn: false,
+      routine: DEFAULT_ROUTINE.map((r) => ({ ...r })),
+      workoutCount: {},
     };
   }
 
@@ -66,11 +75,12 @@
     if (!saved) return freshState();
     if (saved.v === SCHEMA) return saved;
 
-    // v3 only lacked the daily log, so migrate in place and keep the user's
-    // own challenges and rewards rather than resetting them.
-    if (saved.v === 3) {
+    // v3/v4 forward migrations preserve everything the user set up.
+    if (saved.v === 3 || saved.v === 4) {
       saved.log = saved.log || {};
       saved.bestStreak = saved.bestStreak || saved.streak || 0;
+      saved.routine = saved.routine || DEFAULT_ROUTINE.map((r) => ({ ...r }));
+      saved.workoutCount = saved.workoutCount || {};
       saved.v = SCHEMA;
       return saved;
     }
@@ -165,7 +175,7 @@
   const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
   const workouts = (n) => plural(n, "אימון", "אימונים");
   const pts = (n) => plural(n, "נקודה", "נקודות");
-  const reps = (n) => plural(n, "חזרה", "חזרות");
+  const repCount = (n) => plural(n, "חזרה", "חזרות");
 
   // ---------- Sound ----------
   // Mid-rep you're looking at the floor, not the screen, so each counted rep
@@ -252,7 +262,21 @@
 
   // ---------- Render ----------
 
+  let lastPoints = state.points;
+  function bumpPoints() {
+    for (const el of [$("hudPoints"), $("ptsBalance")]) {
+      if (!el) continue;
+      el.classList.remove("bump");
+      void el.offsetWidth;
+      el.classList.add("bump");
+    }
+  }
+
   function render() {
+    if (state.points !== lastPoints) {
+      lastPoints = state.points;
+      setTimeout(bumpPoints, 40);
+    }
     $("hudPoints").textContent = state.points;
     $("hudStreakNum").textContent = state.streak;
     renderNextUp();
@@ -260,8 +284,8 @@
     renderNudge();
     renderGoal();
     renderStats();
+    renderRoutine();
     renderProgress();
-    renderTrain();
     renderStore();
     renderRemind();
   }
@@ -310,16 +334,20 @@
           <span class="row-sub${c.verify === "camera" ? " is-cam" : ""}">${esc(m.text)}</span>
         </div>
         <span class="row-pts${b ? " is-boost" : ""}">+${worthOf(c)}</span>
+        <button class="mini-x" aria-label="מחק אימון"><svg class="ico"><use href="#i-close"/></svg></button>
       `;
-      li.setAttribute("role", "button");
-      li.setAttribute("tabindex", "0");
-      li.onclick = () => startChallenge(c.id);
-      li.onkeydown = (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          startChallenge(c.id);
-        }
+      li.querySelector(".mini-x").onclick = (e) => {
+        e.stopPropagation();
+        state.challenges = state.challenges.filter((x) => x.id !== c.id);
+        state.doneToday = state.doneToday.filter((x) => x !== c.id);
+        save();
+        render();
       };
+      const main = li.querySelector(".row-main");
+      const launch = li.querySelector(".launch");
+      const goStart = () => startChallenge(c.id);
+      launch.onclick = goStart;
+      main.onclick = goStart;
       list.appendChild(li);
     }
   }
@@ -438,12 +466,20 @@
       )
       .join("");
 
+    renderRecords();
+    renderBreakdown();
+  }
+
+  function renderRecords() {
     const totalWorkouts = Object.values(state.log).reduce((s, e) => s + e.n, 0);
+    const activeDays = Object.values(state.log).filter((e) => e.n > 0).length;
     const recs = [
       [state.streak, "רצף נוכחי"],
       [state.bestStreak || 0, "הרצף הכי ארוך"],
+      [totalWorkouts, "אימונים בסך הכל"],
       [state.totalReps, "חזרות שנספרו"],
-      [totalWorkouts, "אימונים שהשלמת"],
+      [activeDays, "ימים פעילים"],
+      [state.redeemed.length, "פרסים שקנית"],
     ];
     $("recordGrid").innerHTML = recs
       .map(
@@ -451,6 +487,29 @@
           `<div class="stat"><span class="stat-val">${esc(String(v))}</span><span class="stat-key">${esc(k)}</span></div>`
       )
       .join("");
+  }
+
+  function renderBreakdown() {
+    const list = $("breakdownList");
+    list.innerHTML = "";
+    const rows = state.challenges
+      .map((c) => {
+        const wc = (state.workoutCount && state.workoutCount[c.id]) || { n: 0, r: 0, p: 0 };
+        return { c, wc };
+      })
+      .sort((a, b) => b.wc.n - a.wc.n);
+
+    for (const { c, wc } of rows) {
+      const li = document.createElement("li");
+      li.className = "breakdown-item";
+      const repsLabel = c.verify === "camera" && wc.r > 0 ? `<small>${wc.r} חזרות</small>` : "";
+      li.innerHTML = `
+        <span class="breakdown-title">${esc(c.title)}</span>
+        <span class="breakdown-count">${wc.n}${repsLabel}</span>
+        <span class="breakdown-pts">${wc.p} נק'</span>
+      `;
+      list.appendChild(li);
+    }
   }
 
   function pickDay(d, btn) {
@@ -462,38 +521,20 @@
     readout.textContent =
       d.n === 0
         ? `${label} — לא היה אימון`
-        : `${label} — ${workouts(d.n)}, ${pts(d.p)}${d.r ? `, ${reps(d.r)}` : ""}`;
+        : `${label} — ${workouts(d.n)}, ${pts(d.p)}${d.r ? `, ${repCount(d.r)}` : ""}`;
   }
 
-  function renderTrain() {
-    const list = $("challengeList");
+  function renderRoutine() {
+    const list = $("routineList");
     list.innerHTML = "";
-    for (const c of state.challenges) {
-      const isDone = state.doneToday.includes(c.id);
-      const m = modeOf(c);
-      const b = boostOf(c);
+    for (const item of state.routine) {
       const li = document.createElement("li");
-      li.className = "row";
+      li.className = "routine-item";
+      const time = item.time || "לא נקבע";
       li.innerHTML = `
-        <button class="tick${isDone ? " is-done" : ""}" aria-label="${esc(c.title)}"><svg class="ico"><use href="#i-check"/></svg></button>
-        <div class="row-main">
-          <span class="row-title${isDone ? " is-done" : ""}">${esc(c.title)}${targetLabel(c) ? " · " + esc(targetLabel(c)) : ""}</span>
-          <span class="row-sub${c.verify === "camera" ? " is-cam" : ""}">
-            <svg class="ico"><use href="#${m.icon}"/></svg>${isDone ? "הושלם היום" : esc(m.text)}
-          </span>
-        </div>
-        <span class="row-pts${b ? " is-boost" : ""}">+${worthOf(c)}</span>
-        <button class="mini-x" aria-label="מחק"><svg class="ico"><use href="#i-close"/></svg></button>
+        <span class="routine-time${item.time ? "" : " is-empty"}" dir="ltr">${esc(time)}</span>
+        <span class="routine-key">${esc(item.label)}</span>
       `;
-      li.querySelector(".tick").onclick = () => {
-        if (!isDone) startChallenge(c.id);
-      };
-      li.querySelector(".mini-x").onclick = () => {
-        state.challenges = state.challenges.filter((x) => x.id !== c.id);
-        state.doneToday = state.doneToday.filter((x) => x !== c.id);
-        save();
-        render();
-      };
       list.appendChild(li);
     }
   }
@@ -564,6 +605,12 @@
     day.n += 1;
     day.p += gained;
     day.r += reps || 0;
+
+    // Per-workout lifetime totals for the breakdown panel.
+    const wc = (state.workoutCount[c.id] = state.workoutCount[c.id] || { n: 0, r: 0, p: 0 });
+    wc.n += 1;
+    wc.r += reps || 0;
+    wc.p += gained;
 
     save();
     render();
@@ -658,6 +705,41 @@
           if (!title) return;
           const points = Math.max(1, parseInt(r.querySelector("#cP").value, 10) || 10);
           state.challenges.push({ id: uid("c"), title, points, verify: "manual" });
+          save();
+          render();
+          closeSheet();
+        };
+      }
+    );
+  }
+
+  function routineSheet() {
+    const rows = state.routine
+      .map(
+        (r) => `
+      <label class="routine-edit">
+        <span class="routine-edit-label">${esc(r.label)}</span>
+        <input class="field routine-edit-time" type="time" data-id="${r.id}" value="${esc(r.time || "")}" />
+      </label>`
+      )
+      .join("");
+
+    openSheet(
+      `<h2 class="sheet-title">סדר יום שלך</h2>
+       <p class="sheet-note">קבע את הזמנים שאתה מתכוון להתאמן. אפשר להשאיר ריק.</p>
+       ${rows}
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="rNo">ביטול</button>
+         <button class="btn btn-fill" id="rYes">שמור</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#rNo").onclick = closeSheet;
+        r.querySelector("#rYes").onclick = () => {
+          const inputs = r.querySelectorAll(".routine-edit-time");
+          for (const inp of inputs) {
+            const item = state.routine.find((x) => x.id === inp.dataset.id);
+            if (item) item.time = inp.value || "";
+          }
           save();
           render();
           closeSheet();
@@ -913,6 +995,26 @@
   $("goalText").onclick = goalSheet;
   $("addChallengeBtn").onclick = addChallengeSheet;
   $("addItemBtn").onclick = addRewardSheet;
+  $("editRoutineBtn").onclick = routineSheet;
+
+  // Dev-only reset - removed before shipping.
+  $("resetBtn").onclick = () => {
+    openSheet(
+      `<h2 class="sheet-title">לאפס הכל?</h2>
+       <p class="sheet-note">כל הנקודות, ההיסטוריה, האימונים המותאמים והפרסים שהוספת יימחקו. זה בלתי הפיך.</p>
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="xNo">ביטול</button>
+         <button class="btn btn-fill" id="xYes">אפס הכל</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#xNo").onclick = closeSheet;
+        r.querySelector("#xYes").onclick = () => {
+          localStorage.removeItem(KEY);
+          location.reload();
+        };
+      }
+    );
+  };
 
   // ---------- Boot ----------
 

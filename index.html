@@ -107,7 +107,12 @@
       <section class="panel">
         <div class="panel-head">
           <h2 class="panel-title">היום</h2>
-          <span class="panel-note" id="dayCount">0 מתוך 0</span>
+          <div class="head-row">
+            <span class="panel-note" id="dayCount">0 מתוך 0</span>
+            <button class="ghost-btn" id="addChallengeBtn" aria-label="הוסף אימון">
+              <svg class="ico"><use href="#i-plus"/></svg>
+            </button>
+          </div>
         </div>
         <div class="daybar"><div class="daybar-fill" id="dayBar"></div></div>
         <ul class="rows" id="todayList"></ul>
@@ -138,6 +143,16 @@
         <div class="stats" id="statsGrid"></div>
       </section>
 
+      <section class="panel routine">
+        <div class="panel-head">
+          <h2 class="panel-title">סדר יום</h2>
+          <button class="ghost-btn" id="editRoutineBtn" aria-label="ערוך סדר יום">
+            <svg class="ico"><use href="#i-pencil"/></svg>
+          </button>
+        </div>
+        <ul class="routine-list" id="routineList"></ul>
+      </section>
+
       <section class="panel" id="remindPanel">
         <div class="panel-head">
           <h2 class="panel-title">תזכורת יומית</h2>
@@ -148,6 +163,10 @@
           <span>הפעל תזכורת</span>
         </button>
       </section>
+
+      <div class="dev-tools">
+        <button class="reset-link" id="resetBtn">איפוס הכל (לבדיקה)</button>
+      </div>
 
     </section>
 
@@ -182,19 +201,16 @@
 
       <section class="panel">
         <div class="panel-head">
-          <h2 class="panel-title">שיאים</h2>
+          <h2 class="panel-title">הנתונים שלך</h2>
         </div>
-        <div class="stats" id="recordGrid"></div>
+        <div class="records" id="recordGrid"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel breakdown">
         <div class="panel-head">
-          <h2 class="panel-title">להרוויח עוד נקודות</h2>
-          <button class="ghost-btn" id="addChallengeBtn" aria-label="הוסף אימון">
-            <svg class="ico"><use href="#i-plus"/></svg>
-          </button>
+          <h2 class="panel-title">פירוט לפי אימון</h2>
         </div>
-        <ul class="rows" id="challengeList"></ul>
+        <ul class="breakdown-list" id="breakdownList"></ul>
       </section>
 
     </section>

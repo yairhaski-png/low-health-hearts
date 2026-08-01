@@ -571,6 +571,126 @@ button { font: inherit; color: inherit; cursor: pointer; }
   border: 0;
 }
 
+/* ---------- Routine (daily schedule) ---------- */
+
+.routine-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.routine-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--ink-3);
+}
+
+.routine-time {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--bone);
+  font-variant-numeric: tabular-nums;
+}
+
+.routine-time.is-empty { color: var(--bone-3); font-weight: 500; font-size: 15px; }
+
+.routine-key {
+  font-size: 11px;
+  color: var(--bone-3);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- Breakdown (per-workout stats) ---------- */
+
+.breakdown-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.breakdown-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--ink-3);
+}
+
+.breakdown-title {
+  font-weight: 600;
+  font-size: 14px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breakdown-count {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--bone);
+  font-variant-numeric: tabular-nums;
+}
+
+.breakdown-count small {
+  font-size: 10.5px;
+  color: var(--bone-3);
+  font-weight: 500;
+  margin-inline-start: 3px;
+}
+
+.breakdown-pts {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--ember);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---------- Records (bigger stat grid) ---------- */
+
+.records {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.head-row { display: flex; align-items: center; gap: 8px; }
+
+/* ---------- Dev tools ---------- */
+
+.dev-tools { display: flex; justify-content: center; padding: 12px 0 4px; }
+
+.reset-link {
+  background: none;
+  border: none;
+  color: var(--bone-3);
+  font-size: 12px;
+  font-family: var(--body);
+  text-decoration: underline;
+  text-decoration-color: var(--line-hi);
+  text-underline-offset: 3px;
+  padding: 6px 12px;
+}
+
 /* ---------- Stats ---------- */
 
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -844,6 +964,26 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 .sheet-actions { display: flex; gap: 9px; margin-top: 2px; }
 
+.routine-edit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+}
+.routine-edit-label { font-size: 14px; font-weight: 600; }
+.routine-edit-time {
+  flex: 0 0 auto;
+  width: 130px;
+  padding: 10px 12px;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color-scheme: dark;
+}
+.routine-edit-time::-webkit-datetime-edit { direction: ltr; text-align: left; }
+
 .btn {
   flex: 1;
   padding: 13px;
@@ -892,9 +1032,58 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .toast[hidden] { display: none; }
 
+/* ---------- Animations ----------
+   Motion is spent in three places only: entrances (fade-up on view change),
+   confirmations (pop on the score/counter), and the hero button's pulse.
+   Everything else stays still - a scoreboard is not a screensaver. */
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes score-bump {
+  0% { transform: scale(1); }
+  38% { transform: scale(1.14); color: var(--warn); }
+  100% { transform: scale(1); }
+}
+
+@keyframes go-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 44, 0.0); }
+  55% { box-shadow: 0 0 0 8px rgba(255, 107, 44, 0.14); }
+}
+
+.view:not([hidden]) > * {
+  animation: fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.view:not([hidden]) > *:nth-child(1) { animation-delay: 0s; }
+.view:not([hidden]) > *:nth-child(2) { animation-delay: 0.04s; }
+.view:not([hidden]) > *:nth-child(3) { animation-delay: 0.08s; }
+.view:not([hidden]) > *:nth-child(4) { animation-delay: 0.12s; }
+.view:not([hidden]) > *:nth-child(5) { animation-delay: 0.16s; }
+.view:not([hidden]) > *:nth-child(6) { animation-delay: 0.20s; }
+.view:not([hidden]) > *:nth-child(n+7) { animation-delay: 0.24s; }
+
+.score-val.bump { animation: score-bump 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+.balance-num.bump { animation: score-bump 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+
+.go { animation: go-pulse 2.4s ease-in-out infinite; }
+.go:active { animation: none; transform: scale(0.985); }
+
+.row.is-tappable { transition: transform 0.08s ease-out, border-color 0.15s ease-out; }
+.row.is-tappable:active { transform: scale(0.985); }
+
+.tab { transition: color 0.2s ease-out; }
+.tab .ico { transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1); }
+.tab:active .ico { transform: scale(0.9); }
+
+.bar { transition: opacity 0.15s ease-out; }
+.bar:hover .bar-fill, .bar:focus-visible .bar-fill { opacity: 0.85; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
 }
