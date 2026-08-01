@@ -112,6 +112,39 @@ function jackFrame(open) {
   check("jack needs the return to closed", reps, 0);
 }
 
+// ---- lunges (same knee-angle pattern as squats) ----
+{
+  const step = COUNTERS.lunge();
+  const reps = sweep(step, [23, 25, 27], cycle(85, 175, 4));
+  check("lunge counts 4 full reps", reps, 4);
+}
+
+// ---- high knees ----
+function kneeFrame(leftUp, rightUp) {
+  const lm = blank();
+  lm[23] = { x: 0.45, y: 0.55, visibility: 1 }; // hip L
+  lm[24] = { x: 0.55, y: 0.55, visibility: 1 }; // hip R
+  lm[25] = { x: 0.45, y: leftUp ? 0.42 : 0.72, visibility: 1 }; // knee L
+  lm[26] = { x: 0.55, y: rightUp ? 0.42 : 0.72, visibility: 1 }; // knee R
+  return lm;
+}
+{
+  const step = COUNTERS.highknee();
+  let reps = 0;
+  for (let i = 0; i < 8; i++) {
+    if (step(kneeFrame(true, false)).rep) reps++;
+    if (step(kneeFrame(false, true)).rep) reps++;
+  }
+  check("highknee counts 16 alternations", reps, 16);
+}
+{
+  const step = COUNTERS.highknee();
+  let reps = 0;
+  // Only ever raising the same leg is not counted.
+  for (let i = 0; i < 20; i++) if (step(kneeFrame(true, false)).rep) reps++;
+  check("highknee ignores single-leg spam", reps, 1);
+}
+
 // ---- occlusion ----
 {
   const step = COUNTERS.squat();

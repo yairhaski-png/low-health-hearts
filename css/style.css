@@ -1198,6 +1198,26 @@ button { font: inherit; color: inherit; cursor: pointer; }
   to { transform: scaleY(1); }
 }
 
+@keyframes confetti-fly {
+  0% {
+    transform: translate(0, 0) rotate(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--dx, 0), calc(var(--dy, 0) * 2 + 60px)) rotate(var(--spin, 360deg));
+    opacity: 0;
+  }
+}
+
+.confetti {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 90;
+}
+
 .view:not([hidden]) > * {
   animation: fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
 }

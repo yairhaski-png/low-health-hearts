@@ -184,10 +184,63 @@ function makeWallSitHold() {
   };
 }
 
+// Lunges - one leg goes forward and knee dips. The pattern at the knee is
+// the same big-angle-change as a squat, so we reuse that state machine but
+// pick only ONE side to count so alternating legs doesn't double-count.
+function makeLungeCounter() {
+  let state = "up";
+  let side = null;
+  return function step(lm) {
+    if (!side) side = bestSide(lm, [L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]);
+    if (!side) return { rep: false, hint: "עמוד כך שכל הגוף נכנס למסך", depth: 0, ready: false };
+    const ang = angleAt(lm[side[0]], lm[side[1]], lm[side[2]]);
+    if (ang === null) return { rep: false, hint: null, depth: 0, ready: false };
+    const depth = Math.min(1, Math.max(0, (170 - ang) / 80));
+    if (state === "up" && ang < 105) state = "down";
+    else if (state === "down" && ang > 155) {
+      state = "up";
+      return { rep: true, hint: null, depth, ready: true };
+    }
+    return { rep: false, hint: null, depth, ready: true };
+  };
+}
+
+// High knees - one knee raises above hip height, then the other. Track the
+// higher knee (smaller y = higher on screen) and count alternations.
+function makeHighKneeCounter() {
+  let lastSide = null; // "L" or "R" - which leg was up last
+  return function step(lm) {
+    if (!visible(lm, L.hipL, L.hipR, L.kneeL, L.kneeR)) {
+      return { rep: false, hint: "עמוד כך שהחזה והברכיים במסך", depth: 0, ready: false };
+    }
+    const hipY = (lm[L.hipL].y + lm[L.hipR].y) / 2;
+    const kneeLY = lm[L.kneeL].y;
+    const kneeRY = lm[L.kneeR].y;
+    // A knee is "raised" when it's clearly above hip level (smaller y).
+    const leftUp = hipY - kneeLY > 0.05;
+    const rightUp = hipY - kneeRY > 0.05;
+
+    // Depth: how high the higher knee is above hip, normalized loosely.
+    const depth = Math.min(1, Math.max(0, Math.max(hipY - kneeLY, hipY - kneeRY) / 0.2));
+
+    if (leftUp && !rightUp && lastSide !== "L") {
+      lastSide = "L";
+      return { rep: true, hint: null, depth, ready: true };
+    }
+    if (rightUp && !leftUp && lastSide !== "R") {
+      lastSide = "R";
+      return { rep: true, hint: null, depth, ready: true };
+    }
+    return { rep: false, hint: null, depth, ready: true };
+  };
+}
+
 export const COUNTERS = {
   squat: makeSquatCounter,
   pushup: makePushupCounter,
   jack: makeJackCounter,
+  lunge: makeLungeCounter,
+  highknee: makeHighKneeCounter,
 };
 
 export const HOLDS = {

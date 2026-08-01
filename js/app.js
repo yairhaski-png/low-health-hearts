@@ -26,6 +26,8 @@
     { id: "squat", title: "סקוואטים", verify: "camera", exercise: "squat", target: 15, points: 15 },
     { id: "pushup", title: "שכיבות סמיכה", verify: "camera", exercise: "pushup", target: 10, points: 20 },
     { id: "jack", title: "קפיצות פישוק", verify: "camera", exercise: "jack", target: 25, points: 12 },
+    { id: "lunge", title: "מכרעים", verify: "camera", exercise: "lunge", target: 12, points: 16 },
+    { id: "highknee", title: "רגל למעלה", verify: "camera", exercise: "highknee", target: 30, points: 13 },
     { id: "wallsit", title: "סקוואט קיר", verify: "hold", hold: "wallsit", target: 30, points: 14 },
     { id: "plank", title: "פלאנק", verify: "timer", target: 45, points: 12 },
     { id: "run", title: "ריצה או הליכה", verify: "run", target: 600, minMeters: RUN_MIN_METERS_PER_10MIN, points: 22 },
@@ -726,6 +728,39 @@
 
   // ---------- Earning ----------
 
+  // Camera fallback: 30% points, no penalty consumption. Only unlocked after
+  // the camera has actually tried and failed to detect the user for a while,
+  // so it never becomes a one-tap shortcut.
+  function partialAward(c) {
+    if (state.doneToday.includes(c.id)) return;
+    const t = today();
+    const base = c.points + boostOf(c); // NOT multiplied by penalty
+    const gained = Math.max(1, Math.round(base * 0.3));
+
+    if (state.lastDoneDate !== t) {
+      state.streak = state.lastDoneDate && dayGap(state.lastDoneDate, t) === 1 ? state.streak + 1 : 1;
+      state.lastDoneDate = t;
+    }
+    if (state.streak > (state.bestStreak || 0)) state.bestStreak = state.streak;
+
+    state.points += gained;
+    state.totalEarned += gained;
+    state.doneToday.push(c.id);
+    state.lastDoneBy[c.id] = t;
+
+    const day = (state.log[t] = state.log[t] || { n: 0, p: 0, r: 0 });
+    day.n += 1;
+    day.p += gained;
+
+    const wc = (state.workoutCount[c.id] = state.workoutCount[c.id] || { n: 0, r: 0, p: 0 });
+    wc.n += 1;
+    wc.p += gained;
+
+    save();
+    render();
+    toast(`אישור ידני - ${gained} נקודות (30%)`);
+  }
+
   function award(c, reps) {
     if (state.doneToday.includes(c.id)) return;
     const gained = worthOf(c);
@@ -779,11 +814,45 @@
   }
 
   function showWin(pts) {
+    burstConfetti();
     openSheet(
       `<h2 class="sheet-title">כל הכבוד</h2>
        <div class="win"><span class="win-num">+${pts}</span><span class="win-key">נקודות</span></div>`
     );
     setTimeout(closeSheet, 1400);
+  }
+
+  // A tiny SVG confetti burst on workout completion. All particles share the
+  // same ember/warn palette so it feels like the scoreboard reacting, not
+  // a foreign flourish, and cleans itself up in under a second.
+  function burstConfetti() {
+    if (matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("class", "confetti");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    svg.setAttribute("preserveAspectRatio", "none");
+    const colors = ["#FF6B2C", "#FFB020", "#EDF0F4", "#38E1D0"];
+    for (let i = 0; i < 22; i++) {
+      const r = document.createElementNS(svgNS, "rect");
+      const size = 1 + Math.random() * 2;
+      r.setAttribute("width", size);
+      r.setAttribute("height", size * (1 + Math.random()));
+      r.setAttribute("x", 50);
+      r.setAttribute("y", 50);
+      r.setAttribute("fill", colors[i % colors.length]);
+      r.setAttribute("transform", `rotate(${Math.random() * 360} 50 50)`);
+      const dx = (Math.random() - 0.5) * 90;
+      const dy = -Math.random() * 60 - 10;
+      r.style.setProperty("--dx", dx + "px");
+      r.style.setProperty("--dy", dy + "px");
+      r.style.setProperty("--spin", Math.floor(Math.random() * 720) + "deg");
+      r.style.animation = `confetti-fly ${700 + Math.random() * 400}ms cubic-bezier(0.22, 1, 0.36, 1) forwards`;
+      r.style.animationDelay = Math.random() * 60 + "ms";
+      svg.appendChild(r);
+    }
+    document.body.appendChild(svg);
+    setTimeout(() => svg.remove(), 1300);
   }
 
   // ---------- Sheets ----------
@@ -1070,6 +1139,26 @@
 
   cam.close.onclick = closeCamera;
 
+  // Only reveal the manual fallback after this many milliseconds without a
+  // successful detection - stops it from being a one-tap shortcut.
+  const MANUAL_UNLOCK_MS = 20000;
+
+  function armManualUnlock(c, condition) {
+    cam.manual.hidden = true;
+    const started = Date.now();
+    const tick = setInterval(() => {
+      if (cam.root.hidden) { clearInterval(tick); return; }
+      if (condition() && Date.now() - started > MANUAL_UNLOCK_MS) {
+        cam.manual.hidden = false;
+      }
+    }, 1000);
+    cam.manual.onclick = () => {
+      closeCamera();
+      partialAward(c);
+    };
+    return () => clearInterval(tick);
+  }
+
   async function openCamera(c) {
     const firstRun = !state.sawCamera;
     const target = scaledTarget(c);
@@ -1079,16 +1168,12 @@
     cam.name.textContent = c.title;
     cam.num.textContent = "0";
     cam.of.textContent = "/ " + target;
-    // The detection engine is a one-time ~17MB download; say so rather than
-    // leaving a silent spinner on a slow connection.
     cam.hint.textContent = firstRun
       ? "מורידים את זיהוי התנועה, פעם אחת בלבד. עדיף על Wi-Fi…"
       : "מכינים את המצלמה…";
     cam.depth.style.width = "0%";
-    cam.manual.onclick = () => {
-      closeCamera();
-      award(c, 0);
-    };
+    let lastRepAt = Date.now();
+    const stopUnlock = armManualUnlock(c, () => Date.now() - lastRepAt > MANUAL_UNLOCK_MS);
 
     let last = 0;
     try {
@@ -1101,6 +1186,7 @@
         onUpdate: ({ count, hint, depth, ready }) => {
           if (count !== last) {
             last = count;
+            lastRepAt = Date.now();
             cam.num.textContent = count;
             cam.num.classList.remove("pop");
             void cam.num.offsetWidth;
@@ -1113,18 +1199,20 @@
           else if (ready) cam.hint.textContent = "ממשיכים, אתה בקצב טוב";
         },
         onDone: (count) => {
+          stopUnlock();
           closeCamera();
           award(c, count);
         },
         onError: (kind) => {
           releaseAwake();
+          cam.manual.hidden = false; // errors unlock manual immediately
           if (kind === "camera") {
             cam.hint.textContent =
               "אין גישה למצלמה. אשר בהגדרות, או פתח את האתר ישירות בספארי במקום מהאייקון.";
           } else if (kind === "model") {
             cam.hint.textContent = "לא הצלחתי לטעון את זיהוי התנועה. בדוק חיבור ונסה שוב.";
           } else {
-            cam.hint.textContent = "משהו השתבש עם המצלמה. אפשר לסמן ידנית.";
+            cam.hint.textContent = "משהו השתבש עם המצלמה.";
           }
         },
       });
@@ -1132,7 +1220,8 @@
       save();
     } catch (err) {
       releaseAwake();
-      cam.hint.textContent = "זיהוי התנועה לא נתמך בדפדפן הזה. אפשר לסמן ידנית.";
+      cam.manual.hidden = false;
+      cam.hint.textContent = "זיהוי התנועה לא נתמך בדפדפן הזה.";
     }
   }
 
@@ -1145,10 +1234,8 @@
     cam.of.textContent = "/ " + target + " שניות";
     cam.hint.textContent = "מכינים את המצלמה…";
     cam.depth.style.width = "0%";
-    cam.manual.onclick = () => {
-      closeCamera();
-      award(c, 0);
-    };
+    let holdingSince = null;
+    const stopUnlock = armManualUnlock(c, () => !holdingSince || Date.now() - holdingSince > MANUAL_UNLOCK_MS);
 
     try {
       const { startHoldSession } = await import("./pose.js");
@@ -1161,16 +1248,22 @@
           const secs = Math.floor(elapsed);
           cam.num.textContent = String(secs).padStart(2, "0");
           cam.depth.style.width = Math.min(100, (elapsed / target) * 100) + "%";
-          if (hint) cam.hint.textContent = hint;
-          else if (holding) cam.hint.textContent = "יופי, החזק כך";
-          else cam.hint.textContent = "רד לזווית של 90 מעלות";
+          if (holding) {
+            if (holdingSince === null) holdingSince = Date.now();
+            cam.hint.textContent = hint || "יופי, החזק כך";
+          } else {
+            holdingSince = null;
+            cam.hint.textContent = hint || "רד לזווית של 90 מעלות";
+          }
         },
         onDone: () => {
+          stopUnlock();
           closeCamera();
           award(c, 0);
         },
         onError: (kind) => {
           releaseAwake();
+          cam.manual.hidden = false;
           if (kind === "camera") cam.hint.textContent = "אין גישה למצלמה.";
           else if (kind === "model") cam.hint.textContent = "לא הצלחתי לטעון את זיהוי התנועה.";
           else cam.hint.textContent = "משהו השתבש עם המצלמה.";
@@ -1180,6 +1273,7 @@
       save();
     } catch (err) {
       releaseAwake();
+      cam.manual.hidden = false;
       cam.hint.textContent = "זיהוי התנועה לא נתמך בדפדפן הזה.";
     }
   }
