@@ -1,13 +1,13 @@
 {
   "name": "קשר - כושר ונקודות",
   "short_name": "קשר",
-  "description": "אפליקציה אישית לכושר וניהול נקודות ואתגרים",
+  "description": "אפליקציית כושר אישית - המצלמה סופרת לך את החזרות",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0a0a0c",
-  "theme_color": "#0a0a0c",
+  "background_color": "#0E1116",
+  "theme_color": "#0E1116",
   "lang": "he",
   "dir": "rtl",
   "icons": [

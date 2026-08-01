@@ -4,13 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
 <title>קשר</title>
-<meta name="description" content="אפליקציה אישית לכושר ונקודות" />
+<meta name="description" content="אפליקציית כושר אישית - המצלמה סופרת לך את החזרות" />
 
-<!-- PWA -->
 <link rel="manifest" href="manifest.webmanifest" />
-<meta name="theme-color" content="#0a0a0c" />
+<meta name="theme-color" content="#0E1116" />
 
-<!-- iOS home-screen support -->
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="קשר" />
@@ -24,105 +22,218 @@
 </head>
 <body>
 
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-home" viewBox="0 0 24 24">
+    <path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24">
+    <path d="M13.5 2 4 13.5h6L9.5 22 20 10.5h-6.6z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-bag" viewBox="0 0 24 24">
+    <path d="M4.5 8h15l-1 12.2a1 1 0 0 1-1 .8H6.5a1 1 0 0 1-1-.8z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>
+    <path d="M8.6 8V6.2a3.4 3.4 0 0 1 6.8 0V8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-flame" viewBox="0 0 24 24">
+    <path d="M12 2.5c3.4 3.2 5.6 5.9 5.6 9.3A5.6 5.6 0 0 1 12 21.5a5.6 5.6 0 0 1-5.6-5.7c0-2 .9-3.4 2.3-5 .2 1.4.9 2.2 1.9 2.5.3-4 .7-6.2 1.4-10.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24">
+    <path d="M3 8.5a1.6 1.6 0 0 1 1.6-1.6h2.2l1.3-2h7.8l1.3 2h2.2A1.6 1.6 0 0 1 21 8.5v10a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 18.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+    <circle cx="12" cy="13.4" r="3.7" fill="none" stroke="currentColor" stroke-width="1.8"/>
+  </symbol>
+  <symbol id="i-timer" viewBox="0 0 24 24">
+    <circle cx="12" cy="13.5" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/>
+    <path d="M12 9.2v4.5l2.8 1.8M9.3 2.5h5.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24">
+    <path d="M9 11V4.8a1.6 1.6 0 0 1 3.2 0V10m0-.6V3.6a1.6 1.6 0 0 1 3.2 0V11m0-.4V6.2a1.6 1.6 0 0 1 3.1 0v8.4c0 3.8-2.6 6.9-6.4 6.9-2.3 0-3.9-1-5.1-2.9L4 15.4a1.7 1.7 0 0 1 2.7-2L9 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24">
+    <path d="M4.5 12.6 9.5 17.5 19.5 6.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24">
+    <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-close" viewBox="0 0 24 24">
+    <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24">
+    <path d="M4 20h4L20 8l-4-4L4 16z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-target" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.8"/>
+    <circle cx="12" cy="12" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/>
+  </symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24">
+    <path d="M6.2 10.2a5.8 5.8 0 0 1 11.6 0c0 4 1.2 5.6 1.2 5.6H5s1.2-1.6 1.2-5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+    <path d="M10.2 18.8a2 2 0 0 0 3.6 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+  </symbol>
+</svg>
+
 <div class="app">
 
-  <header class="topbar">
-    <div class="brand">קשר</div>
-    <div class="points-chip" id="topPoints">0 נק'</div>
+  <header class="scoreboard">
+    <div class="mark">קשר</div>
+    <div class="score-stats">
+      <div class="score-stat">
+        <span class="score-val" id="hudPoints">0</span>
+        <span class="score-key">נקודות</span>
+      </div>
+      <div class="score-div"></div>
+      <div class="score-stat">
+        <span class="score-val streak" id="hudStreak"><svg class="ico"><use href="#i-flame"/></svg><span id="hudStreakNum">0</span></span>
+        <span class="score-key">רצף</span>
+      </div>
+    </div>
   </header>
 
   <main id="views">
 
     <!-- LOBBY -->
     <section class="view" id="view-lobby">
-      <div class="card hero">
-        <div class="hero-points" id="lobbyPoints">0</div>
-        <div class="hero-label">נקודות</div>
-        <div class="streak" id="lobbyStreak">רצף: 0 ימים</div>
-      </div>
 
-      <div class="card">
-        <div class="card-title">🎯 היעד הקרוב</div>
-        <div class="goal-row">
-          <div class="goal-text" id="goalText">לחץ כדי להגדיר יעד</div>
-          <button class="icon-btn" id="editGoalBtn">✎</button>
+      <article class="nextup" id="nextUp">
+        <div class="nextup-eyebrow">הדבר הבא שלך</div>
+        <h1 class="nextup-title" id="nextUpTitle">—</h1>
+        <div class="nextup-meta">
+          <span class="chip" id="nextUpMode">—</span>
+          <span class="chip chip-pts" id="nextUpPts">—</span>
         </div>
-      </div>
+        <button class="go" id="nextUpGo">
+          <svg class="ico"><use href="#i-bolt"/></svg>
+          <span>מתחילים</span>
+        </button>
+      </article>
 
-      <div class="card">
-        <div class="card-title">📋 מה נשאר להיום</div>
-        <ul class="today-list" id="todayList"></ul>
-        <div class="empty-note" id="todayEmpty" hidden>סיימת הכל להיום. כל הכבוד! 🔥</div>
-      </div>
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">היום</h2>
+          <span class="panel-note" id="dayCount">0 מתוך 0</span>
+        </div>
+        <div class="daybar"><div class="daybar-fill" id="dayBar"></div></div>
+        <ul class="rows" id="todayList"></ul>
+        <p class="done-note" id="todayEmpty" hidden>סיימת הכל להיום. תנוח, מגיע לך.</p>
+      </section>
 
-      <div class="card quote-card">
-        <div class="card-title">✨ מוטיבציה</div>
-        <div class="quote" id="quoteText"></div>
-      </div>
+      <section class="panel" id="nudgePanel" hidden>
+        <div class="panel-head">
+          <h2 class="panel-title">שווה לך עכשיו</h2>
+        </div>
+        <p class="nudge-text" id="nudgeText"></p>
+      </section>
 
-      <div class="card">
-        <div class="card-title">📊 סיכום</div>
-        <div class="summary-grid" id="summaryGrid"></div>
-      </div>
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">היעד שלך</h2>
+          <button class="ghost-btn" id="editGoalBtn" aria-label="ערוך יעד">
+            <svg class="ico"><use href="#i-pencil"/></svg>
+          </button>
+        </div>
+        <p class="goal" id="goalText">קבע יעד שתרצה להגיע אליו</p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">הסיכום שלך</h2>
+        </div>
+        <div class="stats" id="statsGrid"></div>
+      </section>
+
+      <section class="panel" id="remindPanel">
+        <div class="panel-head">
+          <h2 class="panel-title">תזכורת יומית</h2>
+        </div>
+        <p class="panel-body" id="remindBody">קבל תזכורת בדפדפן כשהרצף שלך בסכנה.</p>
+        <button class="wide-btn" id="remindBtn">
+          <svg class="ico"><use href="#i-bell"/></svg>
+          <span>הפעל תזכורת</span>
+        </button>
+      </section>
+
     </section>
 
-    <!-- POINTS & CHALLENGES -->
-    <section class="view" id="view-points" hidden>
-      <div class="card hero small">
-        <div class="hero-points" id="pointsPagePoints">0</div>
-        <div class="hero-label">הנקודות שלך</div>
-      </div>
-
-      <div class="card">
-        <div class="card-title-row">
-          <div class="card-title">💪 אתגרים</div>
-          <button class="add-btn" id="addChallengeBtn">+ הוסף</button>
+    <!-- TRAIN -->
+    <section class="view" id="view-train" hidden>
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">האימונים שלך</h2>
+          <button class="ghost-btn" id="addChallengeBtn" aria-label="הוסף אימון">
+            <svg class="ico"><use href="#i-plus"/></svg>
+          </button>
         </div>
-        <ul class="challenge-list" id="challengeList"></ul>
-      </div>
+        <ul class="rows" id="challengeList"></ul>
+      </section>
     </section>
 
     <!-- STORE -->
     <section class="view" id="view-store" hidden>
-      <div class="card hero small">
-        <div class="hero-points" id="storePagePoints">0</div>
-        <div class="hero-label">זמין להוצאה</div>
-      </div>
-
-      <div class="card">
-        <div class="card-title-row">
-          <div class="card-title">🛍️ חנות</div>
-          <button class="add-btn" id="addItemBtn">+ הוסף</button>
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">חנות הפרסים</h2>
+          <button class="ghost-btn" id="addItemBtn" aria-label="הוסף פרס">
+            <svg class="ico"><use href="#i-plus"/></svg>
+          </button>
         </div>
-        <ul class="store-list" id="storeList"></ul>
-      </div>
+        <p class="panel-body">יש לך <strong id="storeBalance">0</strong> נקודות להוציא.</p>
+        <ul class="rows" id="storeList"></ul>
+      </section>
 
-      <div class="card">
-        <div class="card-title">🧾 היסטוריית קניות</div>
-        <ul class="history-list" id="historyList"></ul>
-        <div class="empty-note" id="historyEmpty">עדיין לא קנית כלום.</div>
-      </div>
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">מה כבר קנית</h2>
+        </div>
+        <ul class="rows" id="historyList"></ul>
+        <p class="done-note" id="historyEmpty">עוד לא קנית כלום.</p>
+      </section>
     </section>
 
   </main>
 
-  <nav class="tabbar">
-    <button class="tab active" data-view="lobby">
-      <span class="tab-icon">🏠</span><span>לובי</span>
+  <nav class="tabs">
+    <button class="tab is-on" data-view="lobby">
+      <svg class="ico"><use href="#i-home"/></svg><span>בית</span>
     </button>
-    <button class="tab" data-view="points">
-      <span class="tab-icon">⭐</span><span>נקודות</span>
+    <button class="tab" data-view="train">
+      <svg class="ico"><use href="#i-bolt"/></svg><span>אימונים</span>
     </button>
     <button class="tab" data-view="store">
-      <span class="tab-icon">🛍️</span><span>חנות</span>
+      <svg class="ico"><use href="#i-bag"/></svg><span>חנות</span>
     </button>
   </nav>
 
 </div>
 
-<div class="sheet-backdrop" id="sheetBackdrop" hidden>
-  <div class="sheet" id="sheet"></div>
+<!-- Full-screen camera counter -->
+<div class="cam" id="camView" hidden>
+  <video class="cam-video" id="camVideo" playsinline muted></video>
+  <canvas class="cam-canvas" id="camCanvas"></canvas>
+  <div class="cam-shade"></div>
+
+  <header class="cam-top">
+    <button class="cam-x" id="camClose" aria-label="סגור">
+      <svg class="ico"><use href="#i-close"/></svg>
+    </button>
+    <div class="cam-name" id="camName">—</div>
+  </header>
+
+  <div class="cam-count">
+    <div class="cam-num" id="camNum" dir="ltr">0</div>
+    <div class="cam-of" id="camOf" dir="ltr">/ 0</div>
+  </div>
+
+  <div class="cam-depth"><div class="cam-depth-fill" id="camDepth"></div></div>
+
+  <footer class="cam-bottom">
+    <p class="cam-hint" id="camHint">מכינים את המצלמה…</p>
+    <p class="cam-privacy">הווידאו נשאר על המכשיר. לא נשמר ולא נשלח לשום מקום.</p>
+    <button class="cam-manual" id="camManual">לא מצליח? סמן ידנית</button>
+  </footer>
 </div>
+
+<div class="scrim" id="scrim" hidden>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
 
 <script src="js/app.js"></script>
 </body>

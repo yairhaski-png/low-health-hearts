@@ -1,655 +1,761 @@
 (() => {
   "use strict";
 
-  const STORAGE_KEY = "kesher-state-v1";
-  const CHALLENGES_VERSION = 2;
-  const todayStr = () => new Date().toISOString().slice(0, 10);
+  const KEY = "kesher-state";
+  const SCHEMA = 3;
 
-  // verify: "manual" - trust-based tap to complete
-  //         "reps"   - counts discrete reps via the phone's motion sensor (target = rep count)
-  //         "timer"  - pure countdown using the real clock, can't be skipped (target = seconds)
-  //         "cardio" - countdown + motion sensor, needs both time AND minimum movement (target = seconds, minReps = peak count)
-  const DEFAULT_CHALLENGES = [
-    { id: "c1", title: "סקוואטים - 20 חזרות", points: 15, verify: "reps", target: 20 },
-    { id: "c2", title: "קפיצות פישוק - 25 חזרות", points: 15, verify: "reps", target: 25 },
-    {
-      id: "c3",
-      title: "שכיבות סמיכה - 15 חזרות",
-      points: 15,
-      verify: "manual",
-      note: "החיישן לא אמין כשהטלפון לא צמוד לגוף - מסמנים ידנית",
-    },
-    { id: "c4", title: "פלאנק - להחזיק 60 שניות", points: 10, verify: "timer", target: 60 },
-    { id: "c5", title: "הליכה / ריצה - 10 דקות", points: 20, verify: "cardio", target: 600, minReps: 150 },
-    { id: "c6", title: "אימון כושר מלא - 25 דקות", points: 25, verify: "cardio", target: 1500, minReps: 300 },
+  const today = () => new Date().toISOString().slice(0, 10);
+  const dayGap = (a, b) =>
+    Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
+
+  // verify:
+  //   "camera" - the phone camera watches you and counts real reps
+  //   "timer"  - a real countdown you have to actually sit through
+  //   "manual" - you mark it yourself
+  const BASE_CHALLENGES = [
+    { id: "squat", title: "סקוואטים", verify: "camera", exercise: "squat", target: 15, points: 15 },
+    { id: "pushup", title: "שכיבות סמיכה", verify: "camera", exercise: "pushup", target: 10, points: 20 },
+    { id: "jack", title: "קפיצות פישוק", verify: "camera", exercise: "jack", target: 25, points: 12 },
+    { id: "plank", title: "פלאנק", verify: "timer", target: 45, points: 12 },
+    { id: "run", title: "ריצה או הליכה", verify: "timer", target: 600, points: 22 },
   ];
 
-  const DEFAULT_STORE_ITEMS = [
-    { id: "s1", title: "פינוק אישי (קפה / ממתק)", cost: 40 },
-    { id: "s2", title: "שעה של סרט / גיימינג", cost: 60 },
-    { id: "s3", title: "יום חופש מהמשימות", cost: 100 },
-    { id: "s4", title: "לקנות לעצמי משהו קטן", cost: 150 },
-    { id: "s5", title: "ציוד כושר / נעליים חדשות", cost: 300 },
+  const BASE_STORE = [
+    { id: "r1", title: "שעה של גיימינג", cost: 60 },
+    { id: "r2", title: "פרק בסדרה", cost: 45 },
+    { id: "r3", title: "יום חופש מהאימונים", cost: 120 },
+    { id: "r4", title: "משהו קטן שבא לך לקנות", cost: 200 },
+    { id: "r5", title: "נעלי ספורט חדשות", cost: 600 },
   ];
 
-  const QUOTES = [
-    "הגוף הזה שלך - תתייחס אליו כמו לציוד היקר ביותר שיש לך.",
-    "צעד קטן היום שווה יותר מתוכנית מושלמת שלא מתחילה.",
-    "אתה לא צריך מוטיבציה, אתה צריך הרגל. תתחיל, גם בלי חשק.",
-    "כל התחלה קשה. היום הוא רק צעד אחד.",
-    "הרצף הוא להתמיד, לא להיות מושלם.",
-    "נקודה אחת בכל יום שווה שנה בסוף השנה.",
-    "האימון הכי טוב הוא זה שבאמת עשית - לא זה המושלם שרק תכננת.",
-  ];
+  // How many days of skipping before a challenge starts being worth more.
+  const BOOST_AFTER_DAYS = 3;
+  const BOOST_PER_DAY = 5;
 
-  function loadState() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch (e) {}
+  function freshState() {
     return {
+      v: SCHEMA,
       points: 0,
       totalEarned: 0,
+      totalReps: 0,
       goal: "",
       streak: 0,
-      lastActiveDate: null,
-      today: todayStr(),
+      lastDoneDate: null,
+      today: today(),
       doneToday: [],
-      challenges: DEFAULT_CHALLENGES,
-      challengesVersion: CHALLENGES_VERSION,
-      storeItems: DEFAULT_STORE_ITEMS,
+      challenges: BASE_CHALLENGES.map((c) => ({ ...c })),
+      store: BASE_STORE.map((s) => ({ ...s })),
       redeemed: [],
+      lastDoneBy: {},
+      remindOn: false,
     };
   }
 
-  let state = loadState();
+  let state = load();
 
-  function migrateChallengesIfNeeded() {
-    if (state.challengesVersion !== CHALLENGES_VERSION) {
-      state.challenges = DEFAULT_CHALLENGES;
-      const validIds = new Set(DEFAULT_CHALLENGES.map((c) => c.id));
-      state.doneToday = state.doneToday.filter((id) => validIds.has(id));
-      state.challengesVersion = CHALLENGES_VERSION;
+  function load() {
+    let saved = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(KEY) || "null");
+    } catch (e) {
+      saved = null;
     }
+    if (!saved) return freshState();
+
+    // Older versions shipped a different challenge set. Keep everything the
+    // user earned, replace only the parts the new version redefines.
+    if (saved.v !== SCHEMA) {
+      const base = freshState();
+      base.points = saved.points || 0;
+      base.totalEarned = saved.totalEarned || 0;
+      base.goal = saved.goal || "";
+      base.streak = saved.streak || 0;
+      base.redeemed = Array.isArray(saved.redeemed) ? saved.redeemed : [];
+      if (Array.isArray(saved.storeItems)) base.store = saved.storeItems;
+      else if (Array.isArray(saved.store)) base.store = saved.store;
+      return base;
+    }
+    return saved;
   }
 
-  function save() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }
+  const save = () => localStorage.setItem(KEY, JSON.stringify(state));
 
-  function rolloverDayIfNeeded() {
-    const t = todayStr();
+  function rollDay() {
+    const t = today();
     if (state.today !== t) {
-      const yesterday = state.today;
-      const didSomethingYesterday = state.doneToday.length > 0;
-      if (didSomethingYesterday && isConsecutiveDay(yesterday, t)) {
-        state.streak += 1;
-      } else if (!didSomethingYesterday) {
-        state.streak = 0;
-      }
       state.today = t;
       state.doneToday = [];
+      // A streak only survives if yesterday had something in it.
+      if (state.lastDoneDate && dayGap(state.lastDoneDate, t) > 1) state.streak = 0;
       save();
     }
   }
 
-  function isConsecutiveDay(prev, curr) {
-    if (!prev) return false;
-    const p = new Date(prev + "T00:00:00");
-    const c = new Date(curr + "T00:00:00");
-    const diff = Math.round((c - p) / 86400000);
-    return diff === 1;
+  const uid = (p) => p + Math.random().toString(36).slice(2, 8);
+
+  const esc = (s) => {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  };
+
+  const $ = (id) => document.getElementById(id);
+
+  // ---------- Adaptive difficulty ----------
+  // Skipping a workout makes it worth more, a little each day, so the thing
+  // you keep avoiding slowly becomes the most rewarding thing on the list.
+
+  function daysSkipped(c) {
+    const last = state.lastDoneBy && state.lastDoneBy[c.id];
+    if (!last) return null;
+    return dayGap(last, today());
   }
 
-  function uid(prefix) {
-    return prefix + Math.random().toString(36).slice(2, 9);
+  function boostOf(c) {
+    const gap = daysSkipped(c);
+    if (gap === null) return 0;
+    if (gap < BOOST_AFTER_DAYS) return 0;
+    return Math.min(c.points, (gap - BOOST_AFTER_DAYS + 1) * BOOST_PER_DAY);
   }
 
-  // ---------- Rendering ----------
+  const worthOf = (c) => c.points + boostOf(c);
 
-  function renderAll() {
-    document.getElementById("topPoints").textContent = state.points + " נק'";
-    renderLobby();
-    renderPoints();
+  function topBoosted() {
+    let best = null;
+    for (const c of state.challenges) {
+      const b = boostOf(c);
+      if (b > 0 && (!best || b > boostOf(best))) best = c;
+    }
+    return best;
+  }
+
+  // ---------- Labels ----------
+
+  const MODE = {
+    camera: { icon: "i-camera", text: "המצלמה סופרת" },
+    timer: { icon: "i-timer", text: "טיימר" },
+    manual: { icon: "i-hand", text: "סימון ידני" },
+  };
+
+  const modeOf = (c) => MODE[c.verify] || MODE.manual;
+
+  function targetLabel(c) {
+    if (c.verify === "camera") return c.target + " חזרות";
+    if (c.verify === "timer") {
+      return c.target >= 60 ? Math.round(c.target / 60) + " דקות" : c.target + " שניות";
+    }
+    return "";
+  }
+
+  const clock = (s) =>
+    String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+
+  // ---------- Sound ----------
+  // Mid-rep you're looking at the floor, not the screen, so each counted rep
+  // gets an audible blip. Built with an oscillator so there's no audio file
+  // to load and nothing to cache.
+
+  let audio = null;
+
+  function primeAudio() {
+    if (audio) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    try {
+      audio = new AC();
+    } catch (e) {
+      audio = null;
+    }
+  }
+
+  function blip(freq = 660, ms = 90, gain = 0.16) {
+    if (!audio) return;
+    if (audio.state === "suspended") audio.resume().catch(() => {});
+    try {
+      const osc = audio.createOscillator();
+      const amp = audio.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const t = audio.currentTime;
+      amp.gain.setValueAtTime(0, t);
+      amp.gain.linearRampToValueAtTime(gain, t + 0.012);
+      amp.gain.exponentialRampToValueAtTime(0.0001, t + ms / 1000);
+      osc.connect(amp).connect(audio.destination);
+      osc.start(t);
+      osc.stop(t + ms / 1000 + 0.02);
+    } catch (e) {
+      /* audio is a nicety - never let it break the workout */
+    }
+  }
+
+  const cheer = () => {
+    blip(760, 110);
+    setTimeout(() => blip(1020, 190), 120);
+  };
+
+  // ---------- Toast ----------
+
+  let toastTimer = null;
+  function toast(msg) {
+    const el = $("toast");
+    el.textContent = msg;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (el.hidden = true), 2600);
+  }
+
+  // ---------- Render ----------
+
+  function render() {
+    $("hudPoints").textContent = state.points;
+    $("hudStreakNum").textContent = state.streak;
+    renderNextUp();
+    renderToday();
+    renderNudge();
+    renderGoal();
+    renderStats();
+    renderTrain();
     renderStore();
+    renderRemind();
   }
 
-  function renderLobby() {
-    document.getElementById("lobbyPoints").textContent = state.points;
-    document.getElementById("lobbyStreak").textContent = "רצף: " + state.streak + " ימים";
+  const pending = () => state.challenges.filter((c) => !state.doneToday.includes(c.id));
 
-    document.getElementById("goalText").textContent =
-      state.goal && state.goal.trim() ? state.goal : "לחץ כדי להגדיר יעד";
+  function renderNextUp() {
+    const left = pending();
+    const card = $("nextUp");
+    if (!left.length) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    // Lead with whatever has been neglected longest, otherwise just the first.
+    const pick = left.slice().sort((a, b) => boostOf(b) - boostOf(a))[0];
+    const m = modeOf(pick);
+    $("nextUpTitle").textContent = pick.title + (targetLabel(pick) ? " · " + targetLabel(pick) : "");
+    const mode = $("nextUpMode");
+    mode.innerHTML = `<svg class="ico"><use href="#${m.icon}"/></svg><span>${esc(m.text)}</span>`;
+    mode.classList.toggle("chip-cam", pick.verify === "camera");
+    $("nextUpPts").textContent = "+" + worthOf(pick) + " נק'";
+    $("nextUpGo").onclick = () => startChallenge(pick.id);
+  }
 
-    const list = document.getElementById("todayList");
+  function renderToday() {
+    const list = $("todayList");
+    const left = pending();
+    const total = state.challenges.length;
+    const done = total - left.length;
+
+    $("dayCount").textContent = done + " מתוך " + total;
+    $("dayBar").style.width = total ? (done / total) * 100 + "%" : "0%";
+    $("todayEmpty").hidden = left.length !== 0;
+
     list.innerHTML = "";
-    const remaining = state.challenges.filter((c) => !state.doneToday.includes(c.id));
-    document.getElementById("todayEmpty").hidden = remaining.length !== 0;
-
-    remaining.forEach((c) => {
+    for (const c of left) {
+      const m = modeOf(c);
+      const b = boostOf(c);
       const li = document.createElement("li");
-      li.className = "item-row";
+      li.className = "row is-tappable";
       li.innerHTML = `
-        <div class="checkbox" data-id="${c.id}">✓</div>
-        <div class="item-info">
-          <div class="item-title">${escapeHtml(c.title)}</div>
+        <span class="launch${c.verify === "camera" ? " is-cam" : ""}"><svg class="ico"><use href="#${m.icon}"/></svg></span>
+        <div class="row-main">
+          <span class="row-title">${esc(c.title)}${targetLabel(c) ? " · " + esc(targetLabel(c)) : ""}</span>
+          <span class="row-sub${c.verify === "camera" ? " is-cam" : ""}">${esc(m.text)}</span>
         </div>
-        <div class="pts-badge">+${c.points}</div>
+        <span class="row-pts${b ? " is-boost" : ""}">+${worthOf(c)}</span>
       `;
-      li.querySelector(".checkbox").addEventListener("click", () => handleChallengeTap(c.id));
+      li.setAttribute("role", "button");
+      li.setAttribute("tabindex", "0");
+      li.onclick = () => startChallenge(c.id);
+      li.onkeydown = (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          startChallenge(c.id);
+        }
+      };
       list.appendChild(li);
-    });
+    }
+  }
 
-    const dayIndex = new Date().getDate() % QUOTES.length;
-    document.getElementById("quoteText").textContent = QUOTES[dayIndex];
+  function renderNudge() {
+    const c = topBoosted();
+    const panel = $("nudgePanel");
+    if (!c || state.doneToday.includes(c.id)) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    const gap = daysSkipped(c);
+    $("nudgeText").innerHTML =
+      `לא עשית <b>${esc(c.title)}</b> כבר ${gap} ימים, אז שווה עכשיו ` +
+      `<b>${worthOf(c)} נקודות</b> במקום ${c.points}. ככל שתמשיך לדלג, זה יעלה עוד.`;
+  }
 
-    const summary = document.getElementById("summaryGrid");
-    summary.innerHTML = "";
-    const doneToday = state.doneToday.length;
-    const totalChallenges = state.challenges.length;
-    const items = [
-      { num: doneToday + "/" + totalChallenges, label: "בוצע היום" },
-      { num: state.totalEarned, label: "נקודות שנצברו בסה\"כ" },
-      { num: state.redeemed.length, label: "פריטים שנקנו" },
-      { num: state.streak, label: "ימי רצף" },
+  function renderGoal() {
+    const el = $("goalText");
+    const has = state.goal && state.goal.trim();
+    el.textContent = has ? state.goal : "קבע יעד שתרצה להגיע אליו";
+    el.classList.toggle("is-empty", !has);
+  }
+
+  function renderStats() {
+    const done = state.challenges.length - pending().length;
+    const cells = [
+      [done + "/" + state.challenges.length, "אימונים היום"],
+      [state.totalEarned, "נקודות בסך הכל"],
+      [state.totalReps, "חזרות שנספרו"],
+      [state.redeemed.length, "פרסים שקנית"],
     ];
-    items.forEach((it) => {
-      const div = document.createElement("div");
-      div.className = "summary-item";
-      div.innerHTML = `<div class="summary-num">${it.num}</div><div class="summary-label">${it.label}</div>`;
-      summary.appendChild(div);
-    });
+    $("statsGrid").innerHTML = cells
+      .map(
+        ([v, k]) =>
+          `<div class="stat"><span class="stat-val">${esc(String(v))}</span><span class="stat-key">${esc(k)}</span></div>`
+      )
+      .join("");
   }
 
-  function renderPoints() {
-    document.getElementById("pointsPagePoints").textContent = state.points;
-    const list = document.getElementById("challengeList");
+  function renderTrain() {
+    const list = $("challengeList");
     list.innerHTML = "";
-    state.challenges.forEach((c) => {
-      const done = state.doneToday.includes(c.id);
+    for (const c of state.challenges) {
+      const isDone = state.doneToday.includes(c.id);
+      const m = modeOf(c);
+      const b = boostOf(c);
       const li = document.createElement("li");
-      li.className = "item-row";
+      li.className = "row";
       li.innerHTML = `
-        <div class="checkbox ${done ? "done" : ""}" data-id="${c.id}">✓</div>
-        <div class="item-info">
-          <div class="item-title ${done ? "done" : ""}">${escapeHtml(c.title)}</div>
-          <div class="item-sub">${done ? "בוצע היום" : verifySubLabel(c)}</div>
-          ${c.note ? `<div class="item-sub">${escapeHtml(c.note)}</div>` : ""}
+        <button class="tick${isDone ? " is-done" : ""}" aria-label="${esc(c.title)}"><svg class="ico"><use href="#i-check"/></svg></button>
+        <div class="row-main">
+          <span class="row-title${isDone ? " is-done" : ""}">${esc(c.title)}${targetLabel(c) ? " · " + esc(targetLabel(c)) : ""}</span>
+          <span class="row-sub${c.verify === "camera" ? " is-cam" : ""}">
+            <svg class="ico"><use href="#${m.icon}"/></svg>${isDone ? "הושלם היום" : esc(m.text)}
+          </span>
         </div>
-        <div class="pts-badge">+${c.points}</div>
-        <button class="del-btn" data-del="${c.id}">✕</button>
+        <span class="row-pts${b ? " is-boost" : ""}">+${worthOf(c)}</span>
+        <button class="mini-x" aria-label="מחק"><svg class="ico"><use href="#i-close"/></svg></button>
       `;
-      li.querySelector(".checkbox").addEventListener("click", () => {
-        if (!done) handleChallengeTap(c.id);
-      });
-      li.querySelector("[data-del]").addEventListener("click", () => deleteChallenge(c.id));
+      li.querySelector(".tick").onclick = () => {
+        if (!isDone) startChallenge(c.id);
+      };
+      li.querySelector(".mini-x").onclick = () => {
+        state.challenges = state.challenges.filter((x) => x.id !== c.id);
+        state.doneToday = state.doneToday.filter((x) => x !== c.id);
+        save();
+        render();
+      };
       list.appendChild(li);
-    });
-  }
-
-  function verifySubLabel(c) {
-    if (c.verify === "reps") return "לחץ כדי לספור חזרות עם חיישן התנועה";
-    if (c.verify === "timer") return "לחץ כדי להפעיל טיימר";
-    if (c.verify === "cardio") return "לחץ כדי לעקוב עם חיישן תנועה";
-    return "לחץ לביצוע";
+    }
   }
 
   function renderStore() {
-    document.getElementById("storePagePoints").textContent = state.points;
-    const list = document.getElementById("storeList");
+    $("storeBalance").textContent = state.points;
+    const list = $("storeList");
     list.innerHTML = "";
-    state.storeItems.forEach((it) => {
-      const canAfford = state.points >= it.cost;
+    for (const it of state.store) {
+      const can = state.points >= it.cost;
       const li = document.createElement("li");
-      li.className = "item-row";
+      li.className = "row";
       li.innerHTML = `
-        <div class="item-info">
-          <div class="item-title">${escapeHtml(it.title)}</div>
+        <div class="row-main">
+          <span class="row-title">${esc(it.title)}</span>
+          <span class="row-sub">${it.cost} נקודות</span>
         </div>
-        <div class="pts-badge">${it.cost}</div>
-        <button class="buy-btn" ${canAfford ? "" : "disabled"} data-buy="${it.id}">קנה</button>
-        <button class="del-btn" data-del="${it.id}">✕</button>
+        <button class="buy"${can ? "" : " disabled"}>קנה</button>
+        <button class="mini-x" aria-label="מחק"><svg class="ico"><use href="#i-close"/></svg></button>
       `;
-      const buyBtn = li.querySelector("[data-buy]");
-      if (canAfford) buyBtn.addEventListener("click", () => buyItem(it.id));
-      li.querySelector("[data-del]").addEventListener("click", () => deleteStoreItem(it.id));
+      if (can) li.querySelector(".buy").onclick = () => buy(it.id);
+      li.querySelector(".mini-x").onclick = () => {
+        state.store = state.store.filter((x) => x.id !== it.id);
+        save();
+        render();
+      };
       list.appendChild(li);
-    });
-
-    const hist = document.getElementById("historyList");
-    hist.innerHTML = "";
-    const recent = state.redeemed.slice(-10).reverse();
-    document.getElementById("historyEmpty").hidden = recent.length !== 0;
-    recent.forEach((r) => {
-      const li = document.createElement("li");
-      li.className = "item-row";
-      li.innerHTML = `
-        <div class="item-info">
-          <div class="item-title">${escapeHtml(r.title)}</div>
-          <div class="item-sub">${r.date}</div>
-        </div>
-        <div class="pts-badge">-${r.cost}</div>
-      `;
-      hist.appendChild(li);
-    });
-  }
-
-  function escapeHtml(s) {
-    const div = document.createElement("div");
-    div.textContent = s;
-    return div.innerHTML;
-  }
-
-  // ---------- Actions ----------
-
-  function completeChallenge(id) {
-    if (state.doneToday.includes(id)) return;
-    const c = state.challenges.find((x) => x.id === id);
-    if (!c) return;
-    state.points += c.points;
-    state.totalEarned += c.points;
-    state.doneToday.push(id);
-    state.lastActiveDate = todayStr();
-    save();
-    renderAll();
-  }
-
-  function deleteChallenge(id) {
-    state.challenges = state.challenges.filter((c) => c.id !== id);
-    state.doneToday = state.doneToday.filter((x) => x !== id);
-    save();
-    renderAll();
-  }
-
-  function handleChallengeTap(id) {
-    if (state.doneToday.includes(id)) return;
-    const c = state.challenges.find((x) => x.id === id);
-    if (!c) return;
-    if (!c.verify || c.verify === "manual") {
-      completeChallenge(id);
-    } else {
-      openWorkoutSheet(c);
     }
+
+    const hist = $("historyList");
+    const recent = state.redeemed.slice(-8).reverse();
+    $("historyEmpty").hidden = recent.length !== 0;
+    hist.innerHTML = recent
+      .map(
+        (r) => `
+      <li class="row">
+        <div class="row-main">
+          <span class="row-title">${esc(r.title)}</span>
+          <span class="row-sub">${esc(r.date)}</span>
+        </div>
+        <span class="row-pts">-${r.cost}</span>
+      </li>`
+      )
+      .join("");
   }
 
-  function buyItem(id) {
-    const it = state.storeItems.find((x) => x.id === id);
+  // ---------- Earning ----------
+
+  function award(c, reps) {
+    if (state.doneToday.includes(c.id)) return;
+    const gained = worthOf(c);
+    const t = today();
+
+    if (state.lastDoneDate !== t) {
+      state.streak = state.lastDoneDate && dayGap(state.lastDoneDate, t) === 1 ? state.streak + 1 : 1;
+      state.lastDoneDate = t;
+    }
+
+    state.points += gained;
+    state.totalEarned += gained;
+    if (reps) state.totalReps += reps;
+    state.doneToday.push(c.id);
+    state.lastDoneBy[c.id] = t;
+    save();
+    render();
+    cheer();
+    showWin(gained);
+  }
+
+  function buy(id) {
+    const it = state.store.find((x) => x.id === id);
     if (!it || state.points < it.cost) return;
     state.points -= it.cost;
-    state.redeemed.push({ title: it.title, cost: it.cost, date: todayStr() });
+    state.redeemed.push({ title: it.title, cost: it.cost, date: today() });
     save();
-    renderAll();
+    render();
+    toast("קנית: " + it.title);
   }
 
-  function deleteStoreItem(id) {
-    state.storeItems = state.storeItems.filter((x) => x.id !== id);
-    save();
-    renderAll();
+  function showWin(pts) {
+    openSheet(
+      `<h2 class="sheet-title">כל הכבוד</h2>
+       <div class="win"><span class="win-num">+${pts}</span><span class="win-key">נקודות</span></div>`
+    );
+    setTimeout(closeSheet, 1400);
   }
 
-  // ---------- Sheets (modals) ----------
+  // ---------- Sheets ----------
 
-  const sheetBackdrop = document.getElementById("sheetBackdrop");
-  const sheetEl = document.getElementById("sheet");
-  let activeSheetCleanup = null;
+  const scrim = $("scrim");
+  const sheet = $("sheet");
+  let onSheetClose = null;
 
-  function openSheet(html, onMount) {
-    if (activeSheetCleanup) {
-      activeSheetCleanup();
-      activeSheetCleanup = null;
+  function openSheet(html, mount) {
+    if (onSheetClose) {
+      onSheetClose();
+      onSheetClose = null;
     }
-    sheetEl.innerHTML = html;
-    sheetBackdrop.hidden = false;
-    if (onMount) onMount(sheetEl);
+    sheet.innerHTML = html;
+    scrim.hidden = false;
+    if (mount) mount(sheet);
   }
+
   function closeSheet() {
-    if (activeSheetCleanup) {
-      activeSheetCleanup();
-      activeSheetCleanup = null;
+    if (onSheetClose) {
+      onSheetClose();
+      onSheetClose = null;
     }
-    sheetBackdrop.hidden = true;
-    sheetEl.innerHTML = "";
-  }
-  sheetBackdrop.addEventListener("click", (e) => {
-    if (e.target === sheetBackdrop) closeSheet();
-  });
-
-  // ---------- Motion sensor engine ----------
-  // Pure on-device peak-detection over the phone's accelerometer. No AI, no
-  // network calls, no external service - just a threshold + debounce check
-  // so a challenge can't be marked done with a single tap.
-
-  async function requestMotionPermission() {
-    if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
-      try {
-        const res = await DeviceMotionEvent.requestPermission();
-        return res === "granted";
-      } catch (e) {
-        return false;
-      }
-    }
-    return typeof DeviceMotionEvent !== "undefined";
+    scrim.hidden = true;
+    sheet.innerHTML = "";
   }
 
-  function createMotionCounter(onPeak, { threshold = 2.2, minIntervalMs = 350 } = {}) {
-    let smoothed = null;
-    let lastPeakTime = 0;
+  scrim.onclick = (e) => {
+    if (e.target === scrim) closeSheet();
+  };
 
-    function handler(e) {
-      const a = e.accelerationIncludingGravity || e.acceleration;
-      if (!a || a.x === null) return;
-      const mag = Math.sqrt((a.x || 0) ** 2 + (a.y || 0) ** 2 + (a.z || 0) ** 2);
-      if (smoothed === null) smoothed = mag;
-      smoothed = smoothed * 0.9 + mag * 0.1;
-      const delta = mag - smoothed;
-      const now = Date.now();
-      if (delta > threshold && now - lastPeakTime > minIntervalMs) {
-        lastPeakTime = now;
-        onPeak();
+  function goalSheet() {
+    openSheet(
+      `<h2 class="sheet-title">היעד שלך</h2>
+       <input class="field" id="gIn" placeholder="למשל: 30 שכיבות סמיכה ברצף" value="${esc(state.goal || "")}" />
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="gNo">ביטול</button>
+         <button class="btn btn-fill" id="gYes">שמור</button>
+       </div>`,
+      (r) => {
+        const inp = r.querySelector("#gIn");
+        inp.focus();
+        r.querySelector("#gNo").onclick = closeSheet;
+        r.querySelector("#gYes").onclick = () => {
+          state.goal = inp.value.trim();
+          save();
+          render();
+          closeSheet();
+        };
       }
-    }
+    );
+  }
 
-    return {
-      start() {
-        window.addEventListener("devicemotion", handler);
-      },
-      stop() {
-        window.removeEventListener("devicemotion", handler);
-      },
+  function addChallengeSheet() {
+    openSheet(
+      `<h2 class="sheet-title">אימון חדש</h2>
+       <p class="sheet-note">אימון שאתה מוסיף בעצמך מסומן ידנית. ספירה במצלמה עובדת על התרגילים המובנים.</p>
+       <input class="field" id="cT" placeholder="שם האימון" />
+       <input class="field" id="cP" type="number" inputmode="numeric" min="1" value="10" placeholder="נקודות" />
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="cNo">ביטול</button>
+         <button class="btn btn-fill" id="cYes">הוסף</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#cT").focus();
+        r.querySelector("#cNo").onclick = closeSheet;
+        r.querySelector("#cYes").onclick = () => {
+          const title = r.querySelector("#cT").value.trim();
+          if (!title) return;
+          const points = Math.max(1, parseInt(r.querySelector("#cP").value, 10) || 10);
+          state.challenges.push({ id: uid("c"), title, points, verify: "manual" });
+          save();
+          render();
+          closeSheet();
+        };
+      }
+    );
+  }
+
+  function addRewardSheet() {
+    openSheet(
+      `<h2 class="sheet-title">פרס חדש</h2>
+       <input class="field" id="sT" placeholder="מה תרצה לקנות לעצמך" />
+       <input class="field" id="sC" type="number" inputmode="numeric" min="1" value="50" placeholder="מחיר בנקודות" />
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="sNo">ביטול</button>
+         <button class="btn btn-fill" id="sYes">הוסף</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#sT").focus();
+        r.querySelector("#sNo").onclick = closeSheet;
+        r.querySelector("#sYes").onclick = () => {
+          const title = r.querySelector("#sT").value.trim();
+          if (!title) return;
+          const cost = Math.max(1, parseInt(r.querySelector("#sC").value, 10) || 50);
+          state.store.push({ id: uid("s"), title, cost });
+          save();
+          render();
+          closeSheet();
+        };
+      }
+    );
+  }
+
+  // ---------- Starting a challenge ----------
+
+  function startChallenge(id) {
+    const c = state.challenges.find((x) => x.id === id);
+    if (!c || state.doneToday.includes(id)) return;
+    primeAudio(); // must happen inside the tap for iOS to allow sound later
+    if (c.verify === "camera") openCamera(c);
+    else if (c.verify === "timer") openTimer(c);
+    else award(c, 0);
+  }
+
+  // ---------- Timer ----------
+
+  function openTimer(c) {
+    let tick = null;
+    openSheet(
+      `<h2 class="sheet-title">${esc(c.title)}</h2>
+       <p class="sheet-note">הטיימר רץ על השעון האמיתי. השאר את המסך פתוח עד הסוף.</p>
+       <div class="win"><span class="win-num" id="tClock" dir="ltr">${clock(c.target)}</span></div>
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="tNo">ביטול</button>
+         <button class="btn btn-fill" id="tGo">התחל</button>
+       </div>`,
+      (r) => {
+        const face = r.querySelector("#tClock");
+        r.querySelector("#tNo").onclick = closeSheet;
+        r.querySelector("#tGo").onclick = (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true;
+          btn.textContent = "רץ";
+          const started = Date.now();
+          tick = setInterval(() => {
+            const left = Math.max(0, c.target - Math.floor((Date.now() - started) / 1000));
+            face.textContent = clock(left);
+            if (left === 0) {
+              clearInterval(tick);
+              onSheetClose = null;
+              award(c, 0);
+            }
+          }, 200);
+          onSheetClose = () => clearInterval(tick);
+        };
+      }
+    );
+  }
+
+  // ---------- Camera ----------
+
+  const cam = {
+    root: $("camView"),
+    video: $("camVideo"),
+    canvas: $("camCanvas"),
+    num: $("camNum"),
+    of: $("camOf"),
+    name: $("camName"),
+    hint: $("camHint"),
+    depth: $("camDepth"),
+    close: $("camClose"),
+    manual: $("camManual"),
+  };
+
+  let camStop = null;
+
+  function closeCamera() {
+    if (camStop) {
+      camStop();
+      camStop = null;
+    }
+    cam.root.hidden = true;
+    cam.video.srcObject = null;
+    cam.depth.style.width = "0%";
+  }
+
+  cam.close.onclick = closeCamera;
+
+  async function openCamera(c) {
+    cam.root.hidden = false;
+    cam.name.textContent = c.title;
+    cam.num.textContent = "0";
+    cam.of.textContent = "/ " + c.target;
+    cam.hint.textContent = "מכינים את המצלמה…";
+    cam.depth.style.width = "0%";
+    cam.manual.onclick = () => {
+      closeCamera();
+      award(c, 0);
     };
-  }
 
-  function formatClock(totalSeconds) {
-    const m = Math.floor(totalSeconds / 60);
-    const s = totalSeconds % 60;
-    return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
-  }
-
-  function openWorkoutSheet(c) {
-    if (c.verify === "reps") openRepsWorkoutSheet(c);
-    else if (c.verify === "timer") openTimerWorkoutSheet(c);
-    else if (c.verify === "cardio") openCardioWorkoutSheet(c);
-  }
-
-  function openRepsWorkoutSheet(c) {
-    let count = 0;
-    let counter = null;
-
-    openSheet(
-      `
-      <div class="sheet-title">${escapeHtml(c.title)}</div>
-      <div class="workout-counter" id="wCount" dir="ltr">0 / ${c.target}</div>
-      <div class="workout-sub" id="wStatus">לחץ "התחל" והחזק את הטלפון ביד תוך כדי התרגיל</div>
-      <div class="sheet-actions">
-        <button class="btn-secondary" id="wCancel">ביטול</button>
-        <button class="btn-primary" id="wStart">התחל</button>
-      </div>
-      `,
-      (root) => {
-        const countEl = root.querySelector("#wCount");
-        const statusEl = root.querySelector("#wStatus");
-        root.querySelector("#wCancel").addEventListener("click", closeSheet);
-        root.querySelector("#wStart").addEventListener("click", async (ev) => {
-          const ok = await requestMotionPermission();
-          if (!ok) {
-            statusEl.textContent = "אין גישה לחיישן התנועה במכשיר הזה - אפשר לסמן ידנית.";
-            ev.target.outerHTML = '<button class="btn-primary" id="wManual">סמן כבוצע (ללא אימות)</button>';
-            root.querySelector("#wManual").addEventListener("click", () => {
-              completeChallenge(c.id);
-              closeSheet();
-            });
-            return;
+    let last = 0;
+    try {
+      const { startRepSession } = await import("./pose.js");
+      camStop = await startRepSession({
+        video: cam.video,
+        canvas: cam.canvas,
+        exercise: c.exercise,
+        target: c.target,
+        onUpdate: ({ count, hint, depth, ready }) => {
+          if (count !== last) {
+            last = count;
+            cam.num.textContent = count;
+            cam.num.classList.remove("pop");
+            void cam.num.offsetWidth;
+            cam.num.classList.add("pop");
+            blip(620 + Math.min(count, c.target) * 12);
+            if (navigator.vibrate) navigator.vibrate(28);
           }
-          ev.target.disabled = true;
-          ev.target.textContent = "עוקב...";
-          statusEl.textContent = "זוז! (סקוואט / קפיצה מלאה לכל חזרה)";
-          counter = createMotionCounter(() => {
-            count += 1;
-            countEl.textContent = count + " / " + c.target;
-            if (count >= c.target) {
-              activeSheetCleanup = null;
-              counter.stop();
-              completeChallenge(c.id);
-              openSheet(`
-                <div class="sheet-title">כל הכבוד! 💪</div>
-                <div class="workout-counter">+${c.points} נק'</div>
-              `);
-              setTimeout(closeSheet, 1200);
-            }
-          });
-          counter.start();
-          activeSheetCleanup = () => counter.stop();
-        });
-      }
-    );
-  }
-
-  function openTimerWorkoutSheet(c) {
-    let startedAt = null;
-    let intervalId = null;
-
-    openSheet(
-      `
-      <div class="sheet-title">${escapeHtml(c.title)}</div>
-      <div class="workout-counter" id="wClock" dir="ltr">${formatClock(c.target)}</div>
-      <div class="workout-sub">לחץ "התחל" והישאר בעמוד עד שהטיימר מגיע לאפס</div>
-      <div class="sheet-actions">
-        <button class="btn-secondary" id="wCancel">ביטול</button>
-        <button class="btn-primary" id="wStart">התחל</button>
-      </div>
-      `,
-      (root) => {
-        const clockEl = root.querySelector("#wClock");
-        root.querySelector("#wCancel").addEventListener("click", closeSheet);
-        root.querySelector("#wStart").addEventListener("click", (ev) => {
-          ev.target.disabled = true;
-          ev.target.textContent = "רץ...";
-          startedAt = Date.now();
-          intervalId = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-            const remaining = Math.max(0, c.target - elapsed);
-            clockEl.textContent = formatClock(remaining);
-            if (remaining <= 0) {
-              clearInterval(intervalId);
-              activeSheetCleanup = null;
-              completeChallenge(c.id);
-              openSheet(`
-                <div class="sheet-title">כל הכבוד! 💪</div>
-                <div class="workout-counter">+${c.points} נק'</div>
-              `);
-              setTimeout(closeSheet, 1200);
-            }
-          }, 250);
-          activeSheetCleanup = () => clearInterval(intervalId);
-        });
-      }
-    );
-  }
-
-  function openCardioWorkoutSheet(c) {
-    let peaks = 0;
-    let counter = null;
-    let startedAt = null;
-    let intervalId = null;
-
-    function finishIfReady(statusEl) {
-      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-      const timeUp = elapsed >= c.target;
-      if (timeUp && peaks >= c.minReps) {
-        clearInterval(intervalId);
-        counter.stop();
-        activeSheetCleanup = null;
-        completeChallenge(c.id);
-        openSheet(`
-          <div class="sheet-title">כל הכבוד! 💪</div>
-          <div class="workout-counter">+${c.points} נק'</div>
-        `);
-        setTimeout(closeSheet, 1200);
-      } else if (timeUp) {
-        statusEl.textContent = "הזמן נגמר אבל לא זוהתה מספיק תנועה - תמשיך לזוז כדי לסיים.";
-      }
+          cam.depth.style.width = Math.round((depth || 0) * 100) + "%";
+          if (hint) cam.hint.textContent = hint;
+          else if (ready) cam.hint.textContent = "ממשיכים, אתה בקצב טוב";
+        },
+        onDone: (count) => {
+          closeCamera();
+          award(c, count);
+        },
+        onError: (kind) => {
+          if (kind === "camera") {
+            cam.hint.textContent = "אין גישה למצלמה. אפשר לאשר בהגדרות, או לסמן ידנית.";
+          } else if (kind === "model") {
+            cam.hint.textContent = "לא הצלחתי לטעון את זיהוי התנועה. נסה שוב או סמן ידנית.";
+          } else {
+            cam.hint.textContent = "משהו השתבש עם המצלמה. אפשר לסמן ידנית.";
+          }
+        },
+      });
+    } catch (err) {
+      cam.hint.textContent = "זיהוי התנועה לא נתמך בדפדפן הזה. אפשר לסמן ידנית.";
     }
-
-    openSheet(
-      `
-      <div class="sheet-title">${escapeHtml(c.title)}</div>
-      <div class="workout-counter" id="wClock" dir="ltr">${formatClock(c.target)}</div>
-      <div class="workout-sub" id="wStatus">התחל, שים את הטלפון בכיס/ביד, ותזוז לאורך כל הזמן</div>
-      <div class="sheet-actions">
-        <button class="btn-secondary" id="wCancel">ביטול</button>
-        <button class="btn-primary" id="wStart">התחל</button>
-      </div>
-      `,
-      (root) => {
-        const clockEl = root.querySelector("#wClock");
-        const statusEl = root.querySelector("#wStatus");
-        root.querySelector("#wCancel").addEventListener("click", closeSheet);
-        root.querySelector("#wStart").addEventListener("click", async (ev) => {
-          const ok = await requestMotionPermission();
-          if (!ok) {
-            statusEl.textContent = "אין גישה לחיישן התנועה במכשיר הזה - אפשר לסמן ידנית.";
-            ev.target.outerHTML = '<button class="btn-primary" id="wManual">סמן כבוצע (ללא אימות)</button>';
-            root.querySelector("#wManual").addEventListener("click", () => {
-              completeChallenge(c.id);
-              closeSheet();
-            });
-            return;
-          }
-          ev.target.disabled = true;
-          ev.target.textContent = "עוקב...";
-          startedAt = Date.now();
-          counter = createMotionCounter(() => {
-            peaks += 1;
-          });
-          counter.start();
-          intervalId = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-            const remaining = Math.max(0, c.target - elapsed);
-            clockEl.textContent = formatClock(remaining);
-            statusEl.textContent = "תנועה שזוהתה: " + peaks + " / " + c.minReps;
-            finishIfReady(statusEl);
-          }, 250);
-          activeSheetCleanup = () => {
-            clearInterval(intervalId);
-            counter.stop();
-          };
-        });
-      }
-    );
   }
 
-  function openGoalSheet() {
-    openSheet(
-      `
-      <div class="sheet-title">היעד הקרוב שלך</div>
-      <input type="text" id="goalInput" placeholder="לדוגמה: לסיים מסכת ברכות" value="${escapeHtml(state.goal || "")}" />
-      <div class="sheet-actions">
-        <button class="btn-secondary" id="goalCancel">ביטול</button>
-        <button class="btn-primary" id="goalSave">שמור</button>
-      </div>
-      `,
-      (root) => {
-        const input = root.querySelector("#goalInput");
-        input.focus();
-        root.querySelector("#goalCancel").addEventListener("click", closeSheet);
-        root.querySelector("#goalSave").addEventListener("click", () => {
-          state.goal = input.value.trim();
-          save();
-          renderAll();
-          closeSheet();
-        });
-      }
-    );
+  // ---------- Reminders ----------
+  // A static site has no push server, so these are local notifications: they
+  // fire from the app itself, not from Apple's push network.
+
+  function renderRemind() {
+    const btn = $("remindBtn");
+    const body = $("remindBody");
+    if (!("Notification" in window)) {
+      body.textContent = "הדפדפן הזה לא תומך בתזכורות.";
+      btn.disabled = true;
+      btn.querySelector("span").textContent = "לא זמין";
+      return;
+    }
+    if (Notification.permission === "granted" && state.remindOn) {
+      body.textContent =
+        "תזכורות פעילות. הן מופיעות כשאתה פותח את האפליקציה ועוד לא התאמנת היום.";
+      btn.disabled = true;
+      btn.querySelector("span").textContent = "מופעל";
+    } else if (Notification.permission === "denied") {
+      body.textContent = "חסמת תזכורות. אפשר להחזיר את זה בהגדרות של ספארי.";
+      btn.disabled = true;
+      btn.querySelector("span").textContent = "חסום";
+    } else {
+      body.textContent = "קבל תזכורת כשהרצף שלך בסכנה ועוד לא התאמנת היום.";
+      btn.disabled = false;
+      btn.querySelector("span").textContent = "הפעל תזכורת";
+    }
   }
 
-  function openAddChallengeSheet() {
-    openSheet(
-      `
-      <div class="sheet-title">אתגר חדש</div>
-      <input type="text" id="chTitle" placeholder="שם האתגר" />
-      <input type="number" id="chPoints" placeholder="כמה נקודות?" min="1" value="10" />
-      <div class="sheet-actions">
-        <button class="btn-secondary" id="chCancel">ביטול</button>
-        <button class="btn-primary" id="chSave">הוסף</button>
-      </div>
-      `,
-      (root) => {
-        root.querySelector("#chTitle").focus();
-        root.querySelector("#chCancel").addEventListener("click", closeSheet);
-        root.querySelector("#chSave").addEventListener("click", () => {
-          const title = root.querySelector("#chTitle").value.trim();
-          const points = parseInt(root.querySelector("#chPoints").value, 10) || 10;
-          if (!title) return;
-          state.challenges.push({ id: uid("c"), title, points });
-          save();
-          renderAll();
-          closeSheet();
-        });
-      }
-    );
-  }
+  $("remindBtn").onclick = async () => {
+    if (!("Notification" in window)) return;
+    const res = await Notification.requestPermission();
+    state.remindOn = res === "granted";
+    save();
+    renderRemind();
+    if (state.remindOn) toast("תזכורות הופעלו");
+  };
 
-  function openAddItemSheet() {
-    openSheet(
-      `
-      <div class="sheet-title">פריט חדש בחנות</div>
-      <input type="text" id="itTitle" placeholder="שם הפריט" />
-      <input type="number" id="itCost" placeholder="מחיר בנקודות" min="1" value="50" />
-      <div class="sheet-actions">
-        <button class="btn-secondary" id="itCancel">ביטול</button>
-        <button class="btn-primary" id="itSave">הוסף</button>
-      </div>
-      `,
-      (root) => {
-        root.querySelector("#itTitle").focus();
-        root.querySelector("#itCancel").addEventListener("click", closeSheet);
-        root.querySelector("#itSave").addEventListener("click", () => {
-          const title = root.querySelector("#itTitle").value.trim();
-          const cost = parseInt(root.querySelector("#itCost").value, 10) || 50;
-          if (!title) return;
-          state.storeItems.push({ id: uid("s"), title, cost });
-          save();
-          renderAll();
-          closeSheet();
-        });
-      }
-    );
+  function maybeRemind() {
+    if (!state.remindOn) return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    if (state.doneToday.length > 0) return;
+    if (new Date().getHours() < 17) return;
+    try {
+      new Notification("הרצף שלך בסכנה", {
+        body: "עוד לא התאמנת היום. אימון אחד מספיק כדי לשמור על " + state.streak + " ימי רצף.",
+        icon: "icons/icon-192.png",
+      });
+    } catch (e) {
+      /* Safari throws in some standalone contexts; the in-app banner covers it. */
+    }
   }
 
   // ---------- Tabs ----------
 
   const views = {
-    lobby: document.getElementById("view-lobby"),
-    points: document.getElementById("view-points"),
-    store: document.getElementById("view-store"),
+    lobby: $("view-lobby"),
+    train: $("view-train"),
+    store: $("view-store"),
   };
 
-  document.querySelectorAll(".tab").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const target = btn.dataset.view;
-      document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      Object.entries(views).forEach(([name, el]) => {
-        el.hidden = name !== target;
-      });
-    });
+  for (const tab of document.querySelectorAll(".tab")) {
+    tab.onclick = () => {
+      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("is-on"));
+      tab.classList.add("is-on");
+      for (const [name, el] of Object.entries(views)) el.hidden = name !== tab.dataset.view;
+      document.getElementById("views").scrollTo({ top: 0 });
+    };
+  }
+
+  $("editGoalBtn").onclick = goalSheet;
+  $("goalText").onclick = goalSheet;
+  $("addChallengeBtn").onclick = addChallengeSheet;
+  $("addItemBtn").onclick = addRewardSheet;
+
+  // ---------- Boot ----------
+
+  rollDay();
+  save();
+  render();
+  maybeRemind();
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      rollDay();
+      render();
+    }
   });
 
-  document.getElementById("editGoalBtn").addEventListener("click", openGoalSheet);
-  document.getElementById("goalText").addEventListener("click", openGoalSheet);
-  document.getElementById("addChallengeBtn").addEventListener("click", openAddChallengeSheet);
-  document.getElementById("addItemBtn").addEventListener("click", openAddItemSheet);
-
-  // ---------- Init ----------
-
-  rolloverDayIfNeeded();
-  migrateChallengesIfNeeded();
-  save();
-  renderAll();
-
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("sw.js").catch(() => {});
+    window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloaded) return;
+      reloaded = true;
+      location.reload();
     });
   }
 })();
