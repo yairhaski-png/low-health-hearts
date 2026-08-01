@@ -2,15 +2,26 @@
   "use strict";
 
   const STORAGE_KEY = "kesher-state-v1";
+  const CHALLENGES_VERSION = 2;
   const todayStr = () => new Date().toISOString().slice(0, 10);
 
+  // verify: "manual" - trust-based tap to complete
+  //         "reps"   - counts discrete reps via the phone's motion sensor (target = rep count)
+  //         "timer"  - pure countdown using the real clock, can't be skipped (target = seconds)
+  //         "cardio" - countdown + motion sensor, needs both time AND minimum movement (target = seconds, minReps = peak count)
   const DEFAULT_CHALLENGES = [
-    { id: "c1", title: "לימוד תורה - 15 דקות", points: 15 },
-    { id: "c2", title: "לימוד פרשת השבוע", points: 20 },
-    { id: "c3", title: "תפילה בכוונה", points: 10 },
-    { id: "c4", title: "שכיבות שמיכה - 20 חזרות", points: 10 },
-    { id: "c5", title: "הליכה / ריצה - 20 דקות", points: 15 },
-    { id: "c6", title: "אימון כושר מלא - 30 דקות", points: 25 },
+    { id: "c1", title: "סקוואטים - 20 חזרות", points: 15, verify: "reps", target: 20 },
+    { id: "c2", title: "קפיצות פישוק - 25 חזרות", points: 15, verify: "reps", target: 25 },
+    {
+      id: "c3",
+      title: "שכיבות סמיכה - 15 חזרות",
+      points: 15,
+      verify: "manual",
+      note: "החיישן לא אמין כשהטלפון לא צמוד לגוף - מסמנים ידנית",
+    },
+    { id: "c4", title: "פלאנק - להחזיק 60 שניות", points: 10, verify: "timer", target: 60 },
+    { id: "c5", title: "הליכה / ריצה - 10 דקות", points: 20, verify: "cardio", target: 600, minReps: 150 },
+    { id: "c6", title: "אימון כושר מלא - 25 דקות", points: 25, verify: "cardio", target: 1500, minReps: 300 },
   ];
 
   const DEFAULT_STORE_ITEMS = [
@@ -18,17 +29,17 @@
     { id: "s2", title: "שעה של סרט / גיימינג", cost: 60 },
     { id: "s3", title: "יום חופש מהמשימות", cost: 100 },
     { id: "s4", title: "לקנות לעצמי משהו קטן", cost: 150 },
-    { id: "s5", title: "ספר תורני חדש", cost: 300 },
+    { id: "s5", title: "ציוד כושר / נעליים חדשות", cost: 300 },
   ];
 
   const QUOTES = [
-    "“אין אדם עומד על דברי תורה אלא אם כושל בהן” - מסכת גיטין",
-    "צעד קטן 15 דקות של לימוד שווה שעה של וויתור.",
-    "הגוף והנשמה עובדים ביחד - דאג גם במנוחה.",
+    "הגוף הזה שלך - תתייחס אליו כמו לציוד היקר ביותר שיש לך.",
+    "צעד קטן היום שווה יותר מתוכנית מושלמת שלא מתחילה.",
+    "אתה לא צריך מוטיבציה, אתה צריך הרגל. תתחיל, גם בלי חשק.",
     "כל התחלה קשה. היום הוא רק צעד אחד.",
     "הרצף הוא להתמיד, לא להיות מושלם.",
-    "“בכל דרכיך דעהו והוא יישר ארחותיך” - משלי",
     "נקודה אחת בכל יום שווה שנה בסוף השנה.",
+    "האימון הכי טוב הוא זה שבאמת עשית - לא זה המושלם שרק תכננת.",
   ];
 
   function loadState() {
@@ -45,12 +56,22 @@
       today: todayStr(),
       doneToday: [],
       challenges: DEFAULT_CHALLENGES,
+      challengesVersion: CHALLENGES_VERSION,
       storeItems: DEFAULT_STORE_ITEMS,
       redeemed: [],
     };
   }
 
   let state = loadState();
+
+  function migrateChallengesIfNeeded() {
+    if (state.challengesVersion !== CHALLENGES_VERSION) {
+      state.challenges = DEFAULT_CHALLENGES;
+      const validIds = new Set(DEFAULT_CHALLENGES.map((c) => c.id));
+      state.doneToday = state.doneToday.filter((id) => validIds.has(id));
+      state.challengesVersion = CHALLENGES_VERSION;
+    }
+  }
 
   function save() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -115,7 +136,7 @@
         </div>
         <div class="pts-badge">+${c.points}</div>
       `;
-      li.querySelector(".checkbox").addEventListener("click", () => completeChallenge(c.id));
+      li.querySelector(".checkbox").addEventListener("click", () => handleChallengeTap(c.id));
       list.appendChild(li);
     });
 
@@ -152,17 +173,25 @@
         <div class="checkbox ${done ? "done" : ""}" data-id="${c.id}">✓</div>
         <div class="item-info">
           <div class="item-title ${done ? "done" : ""}">${escapeHtml(c.title)}</div>
-          <div class="item-sub">${done ? "בוצע היום" : "לחץ לביצוע"}</div>
+          <div class="item-sub">${done ? "בוצע היום" : verifySubLabel(c)}</div>
+          ${c.note ? `<div class="item-sub">${escapeHtml(c.note)}</div>` : ""}
         </div>
         <div class="pts-badge">+${c.points}</div>
         <button class="del-btn" data-del="${c.id}">✕</button>
       `;
       li.querySelector(".checkbox").addEventListener("click", () => {
-        if (!done) completeChallenge(c.id);
+        if (!done) handleChallengeTap(c.id);
       });
       li.querySelector("[data-del]").addEventListener("click", () => deleteChallenge(c.id));
       list.appendChild(li);
     });
+  }
+
+  function verifySubLabel(c) {
+    if (c.verify === "reps") return "לחץ כדי לספור חזרות עם חיישן התנועה";
+    if (c.verify === "timer") return "לחץ כדי להפעיל טיימר";
+    if (c.verify === "cardio") return "לחץ כדי לעקוב עם חיישן תנועה";
+    return "לחץ לביצוע";
   }
 
   function renderStore() {
@@ -232,6 +261,17 @@
     renderAll();
   }
 
+  function handleChallengeTap(id) {
+    if (state.doneToday.includes(id)) return;
+    const c = state.challenges.find((x) => x.id === id);
+    if (!c) return;
+    if (!c.verify || c.verify === "manual") {
+      completeChallenge(id);
+    } else {
+      openWorkoutSheet(c);
+    }
+  }
+
   function buyItem(id) {
     const it = state.storeItems.find((x) => x.id === id);
     if (!it || state.points < it.cost) return;
@@ -251,19 +291,252 @@
 
   const sheetBackdrop = document.getElementById("sheetBackdrop");
   const sheetEl = document.getElementById("sheet");
+  let activeSheetCleanup = null;
 
   function openSheet(html, onMount) {
+    if (activeSheetCleanup) {
+      activeSheetCleanup();
+      activeSheetCleanup = null;
+    }
     sheetEl.innerHTML = html;
     sheetBackdrop.hidden = false;
     if (onMount) onMount(sheetEl);
   }
   function closeSheet() {
+    if (activeSheetCleanup) {
+      activeSheetCleanup();
+      activeSheetCleanup = null;
+    }
     sheetBackdrop.hidden = true;
     sheetEl.innerHTML = "";
   }
   sheetBackdrop.addEventListener("click", (e) => {
     if (e.target === sheetBackdrop) closeSheet();
   });
+
+  // ---------- Motion sensor engine ----------
+  // Pure on-device peak-detection over the phone's accelerometer. No AI, no
+  // network calls, no external service - just a threshold + debounce check
+  // so a challenge can't be marked done with a single tap.
+
+  async function requestMotionPermission() {
+    if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+      try {
+        const res = await DeviceMotionEvent.requestPermission();
+        return res === "granted";
+      } catch (e) {
+        return false;
+      }
+    }
+    return typeof DeviceMotionEvent !== "undefined";
+  }
+
+  function createMotionCounter(onPeak, { threshold = 2.2, minIntervalMs = 350 } = {}) {
+    let smoothed = null;
+    let lastPeakTime = 0;
+
+    function handler(e) {
+      const a = e.accelerationIncludingGravity || e.acceleration;
+      if (!a || a.x === null) return;
+      const mag = Math.sqrt((a.x || 0) ** 2 + (a.y || 0) ** 2 + (a.z || 0) ** 2);
+      if (smoothed === null) smoothed = mag;
+      smoothed = smoothed * 0.9 + mag * 0.1;
+      const delta = mag - smoothed;
+      const now = Date.now();
+      if (delta > threshold && now - lastPeakTime > minIntervalMs) {
+        lastPeakTime = now;
+        onPeak();
+      }
+    }
+
+    return {
+      start() {
+        window.addEventListener("devicemotion", handler);
+      },
+      stop() {
+        window.removeEventListener("devicemotion", handler);
+      },
+    };
+  }
+
+  function formatClock(totalSeconds) {
+    const m = Math.floor(totalSeconds / 60);
+    const s = totalSeconds % 60;
+    return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  }
+
+  function openWorkoutSheet(c) {
+    if (c.verify === "reps") openRepsWorkoutSheet(c);
+    else if (c.verify === "timer") openTimerWorkoutSheet(c);
+    else if (c.verify === "cardio") openCardioWorkoutSheet(c);
+  }
+
+  function openRepsWorkoutSheet(c) {
+    let count = 0;
+    let counter = null;
+
+    openSheet(
+      `
+      <div class="sheet-title">${escapeHtml(c.title)}</div>
+      <div class="workout-counter" id="wCount" dir="ltr">0 / ${c.target}</div>
+      <div class="workout-sub" id="wStatus">לחץ "התחל" והחזק את הטלפון ביד תוך כדי התרגיל</div>
+      <div class="sheet-actions">
+        <button class="btn-secondary" id="wCancel">ביטול</button>
+        <button class="btn-primary" id="wStart">התחל</button>
+      </div>
+      `,
+      (root) => {
+        const countEl = root.querySelector("#wCount");
+        const statusEl = root.querySelector("#wStatus");
+        root.querySelector("#wCancel").addEventListener("click", closeSheet);
+        root.querySelector("#wStart").addEventListener("click", async (ev) => {
+          const ok = await requestMotionPermission();
+          if (!ok) {
+            statusEl.textContent = "אין גישה לחיישן התנועה במכשיר הזה - אפשר לסמן ידנית.";
+            ev.target.outerHTML = '<button class="btn-primary" id="wManual">סמן כבוצע (ללא אימות)</button>';
+            root.querySelector("#wManual").addEventListener("click", () => {
+              completeChallenge(c.id);
+              closeSheet();
+            });
+            return;
+          }
+          ev.target.disabled = true;
+          ev.target.textContent = "עוקב...";
+          statusEl.textContent = "זוז! (סקוואט / קפיצה מלאה לכל חזרה)";
+          counter = createMotionCounter(() => {
+            count += 1;
+            countEl.textContent = count + " / " + c.target;
+            if (count >= c.target) {
+              activeSheetCleanup = null;
+              counter.stop();
+              completeChallenge(c.id);
+              openSheet(`
+                <div class="sheet-title">כל הכבוד! 💪</div>
+                <div class="workout-counter">+${c.points} נק'</div>
+              `);
+              setTimeout(closeSheet, 1200);
+            }
+          });
+          counter.start();
+          activeSheetCleanup = () => counter.stop();
+        });
+      }
+    );
+  }
+
+  function openTimerWorkoutSheet(c) {
+    let startedAt = null;
+    let intervalId = null;
+
+    openSheet(
+      `
+      <div class="sheet-title">${escapeHtml(c.title)}</div>
+      <div class="workout-counter" id="wClock" dir="ltr">${formatClock(c.target)}</div>
+      <div class="workout-sub">לחץ "התחל" והישאר בעמוד עד שהטיימר מגיע לאפס</div>
+      <div class="sheet-actions">
+        <button class="btn-secondary" id="wCancel">ביטול</button>
+        <button class="btn-primary" id="wStart">התחל</button>
+      </div>
+      `,
+      (root) => {
+        const clockEl = root.querySelector("#wClock");
+        root.querySelector("#wCancel").addEventListener("click", closeSheet);
+        root.querySelector("#wStart").addEventListener("click", (ev) => {
+          ev.target.disabled = true;
+          ev.target.textContent = "רץ...";
+          startedAt = Date.now();
+          intervalId = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+            const remaining = Math.max(0, c.target - elapsed);
+            clockEl.textContent = formatClock(remaining);
+            if (remaining <= 0) {
+              clearInterval(intervalId);
+              activeSheetCleanup = null;
+              completeChallenge(c.id);
+              openSheet(`
+                <div class="sheet-title">כל הכבוד! 💪</div>
+                <div class="workout-counter">+${c.points} נק'</div>
+              `);
+              setTimeout(closeSheet, 1200);
+            }
+          }, 250);
+          activeSheetCleanup = () => clearInterval(intervalId);
+        });
+      }
+    );
+  }
+
+  function openCardioWorkoutSheet(c) {
+    let peaks = 0;
+    let counter = null;
+    let startedAt = null;
+    let intervalId = null;
+
+    function finishIfReady(statusEl) {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      const timeUp = elapsed >= c.target;
+      if (timeUp && peaks >= c.minReps) {
+        clearInterval(intervalId);
+        counter.stop();
+        activeSheetCleanup = null;
+        completeChallenge(c.id);
+        openSheet(`
+          <div class="sheet-title">כל הכבוד! 💪</div>
+          <div class="workout-counter">+${c.points} נק'</div>
+        `);
+        setTimeout(closeSheet, 1200);
+      } else if (timeUp) {
+        statusEl.textContent = "הזמן נגמר אבל לא זוהתה מספיק תנועה - תמשיך לזוז כדי לסיים.";
+      }
+    }
+
+    openSheet(
+      `
+      <div class="sheet-title">${escapeHtml(c.title)}</div>
+      <div class="workout-counter" id="wClock" dir="ltr">${formatClock(c.target)}</div>
+      <div class="workout-sub" id="wStatus">התחל, שים את הטלפון בכיס/ביד, ותזוז לאורך כל הזמן</div>
+      <div class="sheet-actions">
+        <button class="btn-secondary" id="wCancel">ביטול</button>
+        <button class="btn-primary" id="wStart">התחל</button>
+      </div>
+      `,
+      (root) => {
+        const clockEl = root.querySelector("#wClock");
+        const statusEl = root.querySelector("#wStatus");
+        root.querySelector("#wCancel").addEventListener("click", closeSheet);
+        root.querySelector("#wStart").addEventListener("click", async (ev) => {
+          const ok = await requestMotionPermission();
+          if (!ok) {
+            statusEl.textContent = "אין גישה לחיישן התנועה במכשיר הזה - אפשר לסמן ידנית.";
+            ev.target.outerHTML = '<button class="btn-primary" id="wManual">סמן כבוצע (ללא אימות)</button>';
+            root.querySelector("#wManual").addEventListener("click", () => {
+              completeChallenge(c.id);
+              closeSheet();
+            });
+            return;
+          }
+          ev.target.disabled = true;
+          ev.target.textContent = "עוקב...";
+          startedAt = Date.now();
+          counter = createMotionCounter(() => {
+            peaks += 1;
+          });
+          counter.start();
+          intervalId = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+            const remaining = Math.max(0, c.target - elapsed);
+            clockEl.textContent = formatClock(remaining);
+            statusEl.textContent = "תנועה שזוהתה: " + peaks + " / " + c.minReps;
+            finishIfReady(statusEl);
+          }, 250);
+          activeSheetCleanup = () => {
+            clearInterval(intervalId);
+            counter.stop();
+          };
+        });
+      }
+    );
+  }
 
   function openGoalSheet() {
     openSheet(
@@ -370,6 +643,7 @@
   // ---------- Init ----------
 
   rolloverDayIfNeeded();
+  migrateChallengesIfNeeded();
   save();
   renderAll();
 

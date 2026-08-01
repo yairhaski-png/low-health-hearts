@@ -334,6 +334,21 @@ body {
   margin-bottom: 4px;
 }
 
+.workout-counter {
+  text-align: center;
+  font-size: 44px;
+  font-weight: 800;
+  color: var(--gold);
+  padding: 10px 0;
+}
+
+.workout-sub {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
 .sheet input {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
