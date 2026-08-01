@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<title>קשר</title>
+<meta name="description" content="אפליקציה אישית ללימוד תורה, כושר ונקודות" />
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#0a0a0c" />
+
+<!-- iOS home-screen support -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="קשר" />
+<link rel="apple-touch-icon" href="icons/icon-180.png" />
+<link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png" />
+<link rel="apple-touch-icon" sizes="167x167" href="icons/icon-167.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png" />
+<link rel="icon" href="icons/icon-192.png" />
+
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">קשר</div>
+    <div class="points-chip" id="topPoints">0 נק'</div>
+  </header>
+
+  <main id="views">
+
+    <!-- LOBBY -->
+    <section class="view" id="view-lobby">
+      <div class="card hero">
+        <div class="hero-points" id="lobbyPoints">0</div>
+        <div class="hero-label">נקודות</div>
+        <div class="streak" id="lobbyStreak">רצף: 0 ימים</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🎯 היעד הקרוב</div>
+        <div class="goal-row">
+          <div class="goal-text" id="goalText">לחץ כדי להגדיר יעד</div>
+          <button class="icon-btn" id="editGoalBtn">✎</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📋 מה נשאר להיום</div>
+        <ul class="today-list" id="todayList"></ul>
+        <div class="empty-note" id="todayEmpty" hidden>סיימת הכל להיום. כל הכבוד! 🔥</div>
+      </div>
+
+      <div class="card quote-card">
+        <div class="card-title">✨ מוטיבציה</div>
+        <div class="quote" id="quoteText"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📊 סיכום</div>
+        <div class="summary-grid" id="summaryGrid"></div>
+      </div>
+    </section>
+
+    <!-- POINTS & CHALLENGES -->
+    <section class="view" id="view-points" hidden>
+      <div class="card hero small">
+        <div class="hero-points" id="pointsPagePoints">0</div>
+        <div class="hero-label">הנקודות שלך</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title-row">
+          <div class="card-title">💪 אתגרים</div>
+          <button class="add-btn" id="addChallengeBtn">+ הוסף</button>
+        </div>
+        <ul class="challenge-list" id="challengeList"></ul>
+      </div>
+    </section>
+
+    <!-- STORE -->
+    <section class="view" id="view-store" hidden>
+      <div class="card hero small">
+        <div class="hero-points" id="storePagePoints">0</div>
+        <div class="hero-label">זמין להוצאה</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title-row">
+          <div class="card-title">🛍️ חנות</div>
+          <button class="add-btn" id="addItemBtn">+ הוסף</button>
+        </div>
+        <ul class="store-list" id="storeList"></ul>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🧾 היסטוריית קניות</div>
+        <ul class="history-list" id="historyList"></ul>
+        <div class="empty-note" id="historyEmpty">עדיין לא קנית כלום.</div>
+      </div>
+    </section>
+
+  </main>
+
+  <nav class="tabbar">
+    <button class="tab active" data-view="lobby">
+      <span class="tab-icon">🏠</span><span>לובי</span>
+    </button>
+    <button class="tab" data-view="points">
+      <span class="tab-icon">⭐</span><span>נקודות</span>
+    </button>
+    <button class="tab" data-view="store">
+      <span class="tab-icon">🛍️</span><span>חנות</span>
+    </button>
+  </nav>
+
+</div>
+
+<div class="sheet-backdrop" id="sheetBackdrop" hidden>
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
