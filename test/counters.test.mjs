@@ -145,6 +145,90 @@ function kneeFrame(leftUp, rightUp) {
   check("highknee ignores single-leg spam", reps, 1);
 }
 
+// ---- sit-ups: hip angle (shoulder 11, hip 23, knee 25) ----
+{
+  const step = COUNTERS.situp();
+  const reps = sweep(step, [11, 23, 25], cycle(75, 150, 5));
+  check("situp counts 5 full reps", reps, 5);
+}
+{
+  const step = COUNTERS.situp();
+  // Barely lifting the torso never crosses the 85 deg "up" threshold.
+  const reps = sweep(step, [11, 23, 25], cycle(120, 150, 5));
+  check("situp ignores tiny lifts", reps, 0);
+}
+
+// ---- glute bridge: same joints, opposite direction ----
+{
+  const step = COUNTERS.bridge();
+  const reps = sweep(step, [11, 23, 25], cycle(168, 115, 4));
+  check("bridge counts 4 full reps", reps, 4);
+}
+{
+  const step = COUNTERS.bridge();
+  const reps = sweep(step, [11, 23, 25], cycle(150, 130, 4));
+  check("bridge ignores partial lifts", reps, 0);
+}
+
+// ---- dips: elbow angle ----
+{
+  const step = COUNTERS.dip();
+  const reps = sweep(step, [11, 13, 15], cycle(100, 170, 4));
+  check("dip counts 4 full reps", reps, 4);
+}
+
+// ---- squat jumps: must be fast, not a slow grind ----
+{
+  const step = COUNTERS.squatjump();
+  // Immediate frames are well under the 1400ms limit, so these count.
+  const reps = sweep(step, [23, 25, 27], cycle(88, 172, 3));
+  check("squatjump counts 3 fast reps", reps, 3);
+}
+{
+  // A slow squat: hold the bottom past the jump window, so it must NOT count.
+  const step = COUNTERS.squatjump();
+  const lm = blank();
+  limb(lm, [23, 25, 27], 172);
+  step(lm);
+  limb(lm, [23, 25, 27], 88);
+  step(lm); // now in "down"
+  const slept = Date.now() + 1500;
+  while (Date.now() < slept) { /* busy wait past the 1400ms jump window */ }
+  limb(lm, [23, 25, 27], 172);
+  const out = step(lm);
+  check("squatjump rejects a slow grind", out.rep, false);
+  check("squatjump explains why it rejected", /סקוואט רגיל/.test(out.hint || ""), true);
+}
+
+// ---- framing feedback ----
+{
+  const step = COUNTERS.squat();
+  const lm = blank();
+  // A whole body squeezed into a 0.15-tall band: standing much too far away.
+  lm[11] = { x: 0.48, y: 0.50, visibility: 1 };
+  lm[12] = { x: 0.52, y: 0.50, visibility: 1 };
+  lm[23] = { x: 0.48, y: 0.56, visibility: 1 };
+  lm[24] = { x: 0.52, y: 0.56, visibility: 1 };
+  lm[25] = { x: 0.48, y: 0.60, visibility: 1 };
+  lm[26] = { x: 0.52, y: 0.60, visibility: 1 };
+  lm[27] = { x: 0.48, y: 0.65, visibility: 1 };
+  lm[28] = { x: 0.52, y: 0.65, visibility: 1 };
+  const out = step(lm);
+  check("framing hint fires when body is tiny in frame", /רחוק/.test(out.hint || ""), true);
+}
+{
+  const step = COUNTERS.squat();
+  const lm = blank();
+  limb(lm, [23, 25, 27], 170, 0.5, 0.6);
+  // Push the feet below the bottom edge.
+  lm[27] = { x: 0.5, y: 1.0, visibility: 1 };
+  lm[28] = { x: 0.5, y: 1.0, visibility: 1 };
+  lm[11] = { x: 0.45, y: 0.2, visibility: 1 };
+  lm[12] = { x: 0.55, y: 0.2, visibility: 1 };
+  const out = step(lm);
+  check("framing hint catches feet off-screen", /הרגליים יוצאות/.test(out.hint || ""), true);
+}
+
 // ---- occlusion ----
 {
   const step = COUNTERS.squat();

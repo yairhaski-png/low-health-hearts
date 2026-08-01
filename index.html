@@ -63,6 +63,10 @@
     <circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.8"/>
     <circle cx="12" cy="12" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/>
   </symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24">
+    <path d="M20 12a8 8 0 1 1-2.6-5.9" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+    <path d="M20.4 3.6v4.2h-4.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
   <symbol id="i-bell" viewBox="0 0 24 24">
     <path d="M6.2 10.2a5.8 5.8 0 0 1 11.6 0c0 4 1.2 5.6 1.2 5.6H5s1.2-1.6 1.2-5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
     <path d="M10.2 18.8a2 2 0 0 0 3.6 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -126,6 +130,20 @@
         <p class="nudge-text" id="nudgeText"></p>
       </section>
 
+      <section class="panel bonus">
+        <div class="panel-head">
+          <h2 class="panel-title">אתגרי בונוס</h2>
+          <div class="head-row">
+            <span class="panel-note" id="bonusTimer">—</span>
+            <button class="ghost-btn" id="rerollBtn" aria-label="החלף אתגרים">
+              <svg class="ico"><use href="#i-refresh"/></svg>
+            </button>
+          </div>
+        </div>
+        <p class="panel-body">שני אתגרים מתחלפים כל 8 שעות, שווים פי 1.5 נקודות.</p>
+        <ul class="rows" id="bonusList"></ul>
+      </section>
+
       <section class="panel excuse" id="excusePanel">
         <div class="panel-head">
           <h2 class="panel-title">תסביר למה לא</h2>
@@ -172,7 +190,10 @@
         <p class="panel-body" id="remindBody">קבל תזכורת בדפדפן כשהרצף שלך בסכנה.</p>
         <button class="wide-btn" id="remindBtn">
           <svg class="ico"><use href="#i-bell"/></svg>
-          <span>הפעל תזכורת</span>
+          <span>הפעל תזכורות</span>
+        </button>
+        <button class="wide-btn quiet" id="testNagBtn" hidden>
+          <span>שלח לי הודעת דוגמה</span>
         </button>
       </section>
 

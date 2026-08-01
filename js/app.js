@@ -2,7 +2,7 @@
   "use strict";
 
   const KEY = "kesher-state";
-  const SCHEMA = 6;
+  const SCHEMA = 7;
   const CHART_DAYS = 14;
   // Minimum distance the phone must have moved for a ריצה workout to count.
   const RUN_MIN_METERS_PER_10MIN = 600;
@@ -32,6 +32,23 @@
     { id: "plank", title: "פלאנק", verify: "timer", target: 45, points: 12 },
     { id: "run", title: "ריצה או הליכה", verify: "run", target: 600, minMeters: RUN_MIN_METERS_PER_10MIN, points: 22 },
   ];
+
+  // Rotating bonus pool. Two of these fill the bonus slots and refresh every
+  // 8 hours, so there's always something that isn't on the daily list.
+  const BONUS_POOL = [
+    { id: "situp", title: "כפיפות בטן", verify: "camera", exercise: "situp", target: 20, points: 16 },
+    { id: "bridge", title: "גשר ירכיים", verify: "camera", exercise: "bridge", target: 15, points: 13 },
+    { id: "dip", title: "דיפים", verify: "camera", exercise: "dip", target: 12, points: 18 },
+    { id: "squatjump", title: "קפיצות סקוואט", verify: "camera", exercise: "squatjump", target: 12, points: 20 },
+    { id: "lunge2", title: "מכרעים כפול", verify: "camera", exercise: "lunge", target: 20, points: 22 },
+    { id: "jack2", title: "פישוק מהיר", verify: "camera", exercise: "jack", target: 40, points: 18 },
+    { id: "wallsit2", title: "סקוואט קיר ארוך", verify: "hold", hold: "wallsit", target: 60, points: 24 },
+    { id: "plank2", title: "פלאנק ארוך", verify: "timer", target: 90, points: 20 },
+  ];
+
+  const BONUS_SLOTS = 2;
+  const BONUS_REFRESH_MS = 8 * 60 * 60 * 1000; // 8 hours
+  const BONUS_MULTIPLIER = 1.5;
 
   const BASE_STORE = [
     { id: "r1", title: "שעה של גיימינג", cost: 60 },
@@ -70,6 +87,8 @@
       penalty: 1.0,
       penaltyDate: null,
       excuseHistory: [],
+      bonus: { pickedAt: 0, ids: [], doneIds: [] },
+      lastNudgeAt: 0,
     };
   }
 
@@ -85,8 +104,8 @@
     if (!saved) return freshState();
     if (saved.v === SCHEMA) return saved;
 
-    // v3/v4/v5 forward migrations preserve everything the user set up.
-    if (saved.v === 3 || saved.v === 4 || saved.v === 5) {
+    // v3..v6 forward migrations preserve everything the user set up.
+    if (saved.v >= 3 && saved.v < SCHEMA) {
       saved.log = saved.log || {};
       saved.bestStreak = saved.bestStreak || saved.streak || 0;
       saved.routine = saved.routine || DEFAULT_ROUTINE.map((r) => ({ ...r }));
@@ -94,6 +113,8 @@
       saved.penalty = saved.penalty || 1.0;
       saved.penaltyDate = saved.penaltyDate || null;
       saved.excuseHistory = saved.excuseHistory || [];
+      saved.bonus = saved.bonus || { pickedAt: 0, ids: [], doneIds: [] };
+      saved.lastNudgeAt = saved.lastNudgeAt || 0;
       // Ensure new base challenges (wallsit) exist without duplicating anything the user had.
       const have = new Set(saved.challenges.map((c) => c.id));
       for (const base of BASE_CHALLENGES) {
@@ -190,6 +211,43 @@
       if (b > 0 && (!best || b > boostOf(best))) best = c;
     }
     return best;
+  }
+
+  // ---------- Bonus slots ----------
+  // Two extra challenges drawn from a rotating pool. They refresh on their own
+  // every 8 hours, and can be rerolled by hand - rerolling costs nothing
+  // because you still have to actually do the exercise to get the points.
+
+  function rollBonus(force) {
+    const now = Date.now();
+    const b = state.bonus || (state.bonus = { pickedAt: 0, ids: [], doneIds: [] });
+    const stale = now - (b.pickedAt || 0) >= BONUS_REFRESH_MS;
+    if (!force && !stale && b.ids && b.ids.length === BONUS_SLOTS) return false;
+
+    const pool = BONUS_POOL.slice();
+    const picked = [];
+    while (picked.length < BONUS_SLOTS && pool.length) {
+      picked.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0].id);
+    }
+    b.ids = picked;
+    b.pickedAt = now;
+    b.doneIds = []; // a fresh pair is a fresh chance
+    return true;
+  }
+
+  const bonusById = (id) => BONUS_POOL.find((x) => x.id === id) || null;
+
+  function bonusMsLeft() {
+    const b = state.bonus || {};
+    return Math.max(0, BONUS_REFRESH_MS - (Date.now() - (b.pickedAt || 0)));
+  }
+
+  function countdownText(ms) {
+    const total = Math.ceil(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    if (h > 0) return `${h}:${String(m).padStart(2, "0")} שעות`;
+    return `${m} דקות`;
   }
 
   // ---------- Labels ----------
@@ -329,6 +387,7 @@
     if (streakVal) streakVal.classList.toggle("is-dead", state.streak === 0);
     renderNextUp();
     renderToday();
+    renderBonus();
     renderNudge();
     renderExcuse();
     renderGoal();
@@ -428,6 +487,60 @@
       main.onclick = goStart;
       list.appendChild(li);
     }
+  }
+
+  function renderBonus() {
+    const list = $("bonusList");
+    const timer = $("bonusTimer");
+    timer.textContent = "מתחדש בעוד " + countdownText(bonusMsLeft());
+
+    list.innerHTML = "";
+    const done = (state.bonus && state.bonus.doneIds) || [];
+    for (const id of (state.bonus && state.bonus.ids) || []) {
+      const c = bonusById(id);
+      if (!c) continue;
+      const isDone = done.includes(id);
+      const m = modeOf(c);
+      const worth = Math.round(c.points * BONUS_MULTIPLIER * activePenalty());
+      const li = document.createElement("li");
+      li.className = "row bonus-row" + (isDone ? " is-done" : " is-tappable");
+      li.innerHTML = `
+        <span class="launch${c.verify === "camera" || c.verify === "hold" ? " is-cam" : ""}">
+          <svg class="ico"><use href="#${m.icon}"/></svg>
+        </span>
+        <div class="row-main">
+          <span class="row-title${isDone ? " is-done" : ""}">${esc(c.title)} · ${esc(targetLabel(c))}</span>
+          <span class="row-sub${c.verify === "camera" || c.verify === "hold" ? " is-cam" : ""}">${isDone ? "הושלם" : esc(m.text)}</span>
+        </div>
+        <span class="row-pts is-bonus">+${worth}</span>
+      `;
+      if (!isDone) {
+        li.setAttribute("role", "button");
+        li.setAttribute("tabindex", "0");
+        const go = () => startBonus(id);
+        li.onclick = go;
+        li.onkeydown = (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
+        };
+      }
+      list.appendChild(li);
+    }
+  }
+
+  function startBonus(id) {
+    const c = bonusById(id);
+    if (!c) return;
+    const done = (state.bonus && state.bonus.doneIds) || [];
+    if (done.includes(id)) return;
+    primeAudio();
+    // Bonus challenges award through the same verified paths as everything
+    // else - they're worth more, not easier.
+    const shim = { ...c, __bonus: true };
+    if (c.verify === "camera") openCamera(shim);
+    else if (c.verify === "hold") openHold(shim);
+    else if (c.verify === "run") openRun(shim);
+    else if (c.verify === "timer") openTimer(shim);
+    else award(shim, 0);
   }
 
   function renderNudge() {
@@ -732,9 +845,11 @@
   // the camera has actually tried and failed to detect the user for a while,
   // so it never becomes a one-tap shortcut.
   function partialAward(c) {
-    if (state.doneToday.includes(c.id)) return;
+    const isBonus = !!c.__bonus;
+    const doneList = isBonus ? (state.bonus.doneIds = state.bonus.doneIds || []) : state.doneToday;
+    if (doneList.includes(c.id)) return;
     const t = today();
-    const base = c.points + boostOf(c); // NOT multiplied by penalty
+    const base = isBonus ? c.points * BONUS_MULTIPLIER : c.points + boostOf(c); // NOT multiplied by penalty
     const gained = Math.max(1, Math.round(base * 0.3));
 
     if (state.lastDoneDate !== t) {
@@ -745,8 +860,8 @@
 
     state.points += gained;
     state.totalEarned += gained;
-    state.doneToday.push(c.id);
-    state.lastDoneBy[c.id] = t;
+    doneList.push(c.id);
+    if (!isBonus) state.lastDoneBy[c.id] = t;
 
     const day = (state.log[t] = state.log[t] || { n: 0, p: 0, r: 0 });
     day.n += 1;
@@ -762,8 +877,14 @@
   }
 
   function award(c, reps) {
-    if (state.doneToday.includes(c.id)) return;
-    const gained = worthOf(c);
+    const isBonus = !!c.__bonus;
+    const doneList = isBonus ? (state.bonus.doneIds = state.bonus.doneIds || []) : state.doneToday;
+    if (doneList.includes(c.id)) return;
+
+    // Bonus challenges pay the 1.5x rate; regular ones pay their normal worth.
+    const gained = isBonus
+      ? Math.round(c.points * BONUS_MULTIPLIER * activePenalty())
+      : worthOf(c);
     const t = today();
 
     if (state.lastDoneDate !== t) {
@@ -775,8 +896,8 @@
     state.points += gained;
     state.totalEarned += gained;
     if (reps) state.totalReps += reps;
-    state.doneToday.push(c.id);
-    state.lastDoneBy[c.id] = t;
+    doneList.push(c.id);
+    if (!isBonus) state.lastDoneBy[c.id] = t;
 
     // Daily log feeds the progress chart.
     const day = (state.log[t] = state.log[t] || { n: 0, p: 0, r: 0 });
@@ -1381,28 +1502,133 @@
   // A static site has no push server, so these are local notifications: they
   // fire from the app itself, not from Apple's push network.
 
+  // ---------- Nagging ----------
+  // The tone escalates with how long you've been gone. Tier 0 is a friendly
+  // poke; by tier 4 it is openly calling you out, which is what was asked for.
+  // It only ever comments on showing up - never on your body.
+
+  const NAG_TIERS = [
+    {
+      days: 0,
+      title: "יאלה, קום",
+      lines: [
+        "עוד לא התאמנת היום. אימון אחד וזהו.",
+        "היום עוד לא נסגר. 5 דקות מספיקות.",
+        "הרצף שלך מחכה. אל תשבור אותו היום.",
+      ],
+    },
+    {
+      days: 1,
+      title: "פספסת אתמול",
+      lines: [
+        "יום אחד בלי כלום. בוא נחזור לזה עכשיו.",
+        "אתמול היה 0. היום זה לא חייב להיות ככה.",
+      ],
+    },
+    {
+      days: 2,
+      title: "יומיים. מה קורה?",
+      lines: [
+        "יומיים ברצף בלי אימון. זה כבר מתחיל להיות הרגל.",
+        "יומיים אפס. תעשה משהו קטן ותסגור את זה.",
+      ],
+    },
+    {
+      days: 4,
+      title: "אתה מאבד את זה",
+      lines: [
+        "4 ימים. כל מה שבנית מתחיל להתפוגג.",
+        "כמעט שבוע בלי כלום. תתעורר.",
+      ],
+    },
+    {
+      days: 7,
+      title: "יא לוזר",
+      lines: [
+        "שבוע שלם. שבוע! תקום מהמיטה ותעשה 10 סקוואטים.",
+        "שבוע בלי כלום. אתה יותר טוב מזה, תוכיח.",
+        "שבוע. אפילו לא סקוואט אחד. בוא נגמור עם הבושה הזאת.",
+      ],
+    },
+  ];
+
+  function daysIdle() {
+    if (!state.lastDoneDate) return 0;
+    return Math.max(0, dayGap(state.lastDoneDate, today()));
+  }
+
+  function nagTier() {
+    const d = daysIdle();
+    let picked = NAG_TIERS[0];
+    for (const t of NAG_TIERS) if (d >= t.days) picked = t;
+    return picked;
+  }
+
+  function nagMessage() {
+    const tier = nagTier();
+    const line = tier.lines[Math.floor(Math.random() * tier.lines.length)];
+    return { title: tier.title, body: line };
+  }
+
+  // Prefer the service worker: on iOS a home-screen PWA can show a
+  // registration notification in cases where `new Notification()` throws.
+  async function fireNotification(title, body) {
+    const opts = {
+      body,
+      icon: "icons/icon-192.png",
+      badge: "icons/icon-192.png",
+      tag: "kesher-nag",
+      renotify: true,
+    };
+    try {
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        if (reg && reg.showNotification) {
+          await reg.showNotification(title, opts);
+          return true;
+        }
+      }
+    } catch (e) {
+      /* fall through to the direct constructor */
+    }
+    try {
+      new Notification(title, opts);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function renderRemind() {
     const btn = $("remindBtn");
     const body = $("remindBody");
+    const test = $("testNagBtn");
     if (!("Notification" in window)) {
       body.textContent = "הדפדפן הזה לא תומך בתזכורות.";
       btn.disabled = true;
       btn.querySelector("span").textContent = "לא זמין";
+      if (test) test.hidden = true;
       return;
     }
     if (Notification.permission === "granted" && state.remindOn) {
+      const d = daysIdle();
       body.textContent =
-        "תזכורות פעילות. הן מופיעות כשאתה פותח את האפליקציה ועוד לא התאמנת היום.";
+        d === 0
+          ? "תזכורות פעילות. ככל שתעלים יותר ימים, ההודעות נעשות פחות נחמדות."
+          : `תזכורות פעילות. ${plural(d, "יום", "ימים")} בלי אימון - ההודעות כבר בטון ${d >= 7 ? "הכי חריף" : "חריף יותר"}.`;
       btn.disabled = true;
       btn.querySelector("span").textContent = "מופעל";
+      if (test) test.hidden = false;
     } else if (Notification.permission === "denied") {
       body.textContent = "חסמת תזכורות. אפשר להחזיר את זה בהגדרות של ספארי.";
       btn.disabled = true;
       btn.querySelector("span").textContent = "חסום";
+      if (test) test.hidden = true;
     } else {
-      body.textContent = "קבל תזכורת כשהרצף שלך בסכנה ועוד לא התאמנת היום.";
+      body.textContent = "קבל דחיפה כשלא התאמנת. ככל שתעלים יותר ימים, ההודעה נעשית יותר בוטה.";
       btn.disabled = false;
-      btn.querySelector("span").textContent = "הפעל תזכורת";
+      btn.querySelector("span").textContent = "הפעל תזכורות";
+      if (test) test.hidden = true;
     }
   }
 
@@ -1412,23 +1638,40 @@
     state.remindOn = res === "granted";
     save();
     renderRemind();
-    if (state.remindOn) toast("תזכורות הופעלו");
+    if (state.remindOn) {
+      toast("תזכורות הופעלו");
+      const m = nagMessage();
+      fireNotification(m.title, m.body);
+    }
   };
 
-  function maybeRemind() {
+  $("testNagBtn").onclick = () => {
+    const m = nagMessage();
+    fireNotification(m.title, m.body);
+    toast("שלחתי הודעת דוגמה");
+  };
+
+  // Nag on open, then keep checking while the app stays open. A static site
+  // has no push server, so this is the honest ceiling: it fires when the app
+  // is running or when you come back to it.
+  const NAG_COOLDOWN_MS = 3 * 60 * 60 * 1000;
+
+  function maybeNag(force) {
     if (!state.remindOn) return;
     if (!("Notification" in window) || Notification.permission !== "granted") return;
     if (state.doneToday.length > 0) return;
-    if (new Date().getHours() < 17) return;
-    try {
-      new Notification("הרצף שלך בסכנה", {
-        body: "עוד לא התאמנת היום. אימון אחד מספיק כדי לשמור על " + state.streak + " ימי רצף.",
-        icon: "icons/icon-192.png",
-      });
-    } catch (e) {
-      /* Safari throws in some standalone contexts; the in-app banner covers it. */
-    }
+    if (todaysExcuse() && todaysExcuse().verdict === "legit") return; // he already told us why
+    const now = Date.now();
+    if (!force && now - (state.lastNudgeAt || 0) < NAG_COOLDOWN_MS) return;
+    // Before evening, only nag if he's actually been away for a day or more.
+    if (!force && new Date().getHours() < 17 && daysIdle() === 0) return;
+    const m = nagMessage();
+    fireNotification(m.title, m.body);
+    state.lastNudgeAt = now;
+    save();
   }
+
+  setInterval(() => maybeNag(false), 15 * 60 * 1000);
 
   // ---------- Tabs ----------
 
@@ -1454,6 +1697,13 @@
   $("editRoutineBtn").onclick = routineSheet;
   $("openExcuseBtn").onclick = openExcuseSheet;
 
+  $("rerollBtn").onclick = () => {
+    rollBonus(true);
+    save();
+    render();
+    toast("אתגרים חדשים");
+  };
+
   // Dev-only reset - removed before shipping.
   $("resetBtn").onclick = () => {
     openSheet(
@@ -1476,14 +1726,28 @@
   // ---------- Boot ----------
 
   rollDay();
+  rollBonus(false);
   save();
   render();
-  maybeRemind();
+  maybeNag(false);
+
+  // Keep the bonus countdown honest without re-rendering the whole app.
+  setInterval(() => {
+    if (rollBonus(false)) {
+      save();
+      render();
+    } else {
+      const el = $("bonusTimer");
+      if (el) el.textContent = "מתחדש בעוד " + countdownText(bonusMsLeft());
+    }
+  }, 30000);
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       rollDay();
+      if (rollBonus(false)) save();
       render();
+      maybeNag(false);
     }
   });
 

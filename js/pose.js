@@ -62,82 +62,150 @@ function bestSide(lm, leftIdxs, rightIdxs) {
 }
 
 /**
+ * Checks whether the camera can actually see enough of you to judge a rep,
+ * and says exactly what's wrong when it can't. This runs before any exercise
+ * logic, because "it isn't counting" is almost always a framing problem, not
+ * a technique problem - and the person needs to be told which.
+ *
+ * Orientation-agnostic: it measures the body's largest extent, so it works
+ * whether you're standing (tall) or lying down for push-ups (wide).
+ */
+function framingHint(lm) {
+  const key = [
+    L.shoulderL, L.shoulderR, L.hipL, L.hipR,
+    L.kneeL, L.kneeR, L.ankleL, L.ankleR,
+  ];
+  const seen = key.filter((i) => lm[i] && (lm[i].visibility ?? 1) >= 0.5);
+  if (seen.length < 4) return "לא רואה אותך טוב - עמוד מול המצלמה";
+
+  const xs = seen.map((i) => lm[i].x);
+  const ys = seen.map((i) => lm[i].y);
+  const top = Math.min(...ys), bottom = Math.max(...ys);
+  const left = Math.min(...xs), right = Math.max(...xs);
+  const span = Math.max(bottom - top, right - left);
+
+  if (bottom > 0.99) return "הרגליים יוצאות מלמטה - הרחק את הטלפון";
+  if (top < 0.01) return "אתה יוצא מלמעלה - הרחק את הטלפון";
+  if (left < 0.01 || right > 0.99) return "אתה יוצא מהצדדים - התמקם במרכז";
+  if (span > 0.95) return "אתה קרוב מדי - התרחק כמטר";
+  if (span < 0.32) return "אתה רחוק מדי - התקרב קצת";
+  return null;
+}
+
+/**
  * Rep counters are two-threshold state machines. A rep is only counted on the
  * full return trip (down -> up), and the two thresholds are deliberately far
  * apart so camera jitter around a single value can't double-count.
  *
  * Each returns { rep: bool, hint: string|null, depth: 0..1, ready: bool }.
+ * `hint` is produced on EVERY frame, not just on rep events, so the screen
+ * is always telling you what to fix rather than going silent.
  */
 
 function makeSquatCounter() {
   let state = "up";
   let minAngle = 180;
+  let shallowMsg = 0; // frames left to keep showing the "not deep enough" note
   return function step(lm) {
+    const frame = framingHint(lm);
     const side = bestSide(lm, [L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]);
-    if (!side) return { rep: false, hint: "עמוד כך שכל הגוף נכנס למסך", depth: 0, ready: false };
+    if (!side) {
+      return { rep: false, hint: frame || "עמוד מהצד כדי שאראה את הברכיים", depth: 0, ready: false };
+    }
     const ang = angleAt(lm[side[0]], lm[side[1]], lm[side[2]]);
-    if (ang === null) return { rep: false, hint: null, depth: 0, ready: false };
+    if (ang === null) return { rep: false, hint: frame, depth: 0, ready: false };
 
     // 170 deg = standing straight, 90 = thighs parallel.
     const depth = Math.min(1, Math.max(0, (170 - ang) / 80));
 
+    let rep = false;
     if (state === "up") {
       if (ang < minAngle) minAngle = ang;
       if (ang < 100) state = "down";
+      else if (ang > 155 && minAngle < 145 && minAngle > 100) {
+        // Came back up without ever getting deep enough.
+        shallowMsg = 60;
+        minAngle = 180;
+      }
     } else if (ang > 155) {
       state = "up";
       minAngle = 180;
-      return { rep: true, hint: null, depth, ready: true };
+      rep = true;
     }
 
-    let hint = null;
-    if (state === "up" && minAngle < 140 && minAngle > 100 && ang > 155) {
-      hint = "כמעט! נסה לרדת קצת יותר עמוק";
-      minAngle = 180;
+    // Framing problems always win - no point coaching depth if half of you
+    // isn't on screen.
+    let hint = frame;
+    if (!hint) {
+      if (shallowMsg > 0) {
+        shallowMsg--;
+        hint = "לא ירדת מספיק - רד עד שהברכיים ב-90 מעלות";
+      } else if (state === "down") {
+        hint = "יופי, עכשיו תעלה עד סוף";
+      } else if (ang < 150) {
+        hint = "עוד קצת למטה";
+      }
     }
-    return { rep: false, hint, depth, ready: true };
+    return { rep, hint, depth, ready: true };
   };
 }
 
 function makePushupCounter() {
   let state = "up";
   let minAngle = 180;
+  let shallowMsg = 0;
   return function step(lm) {
+    const frame = framingHint(lm);
     const side = bestSide(
       lm,
       [L.shoulderL, L.elbowL, L.wristL],
       [L.shoulderR, L.elbowR, L.wristR]
     );
-    if (!side) return { rep: false, hint: "כוון את המצלמה מהצד כדי לראות את הידיים", depth: 0, ready: false };
+    if (!side) {
+      return { rep: false, hint: frame || "הנח את הטלפון בצד כדי שאראה את הידיים", depth: 0, ready: false };
+    }
     const ang = angleAt(lm[side[0]], lm[side[1]], lm[side[2]]);
-    if (ang === null) return { rep: false, hint: null, depth: 0, ready: false };
+    if (ang === null) return { rep: false, hint: frame, depth: 0, ready: false };
 
     const depth = Math.min(1, Math.max(0, (165 - ang) / 75));
 
+    let rep = false;
     if (state === "up") {
       if (ang < minAngle) minAngle = ang;
       if (ang < 100) state = "down";
+      else if (ang > 150 && minAngle < 140 && minAngle > 100) {
+        shallowMsg = 60;
+        minAngle = 180;
+      }
     } else if (ang > 150) {
       state = "up";
       minAngle = 180;
-      return { rep: true, hint: null, depth, ready: true };
+      rep = true;
     }
 
-    let hint = null;
-    if (state === "up" && minAngle < 135 && minAngle > 100 && ang > 150) {
-      hint = "כמעט! כופף את המרפקים קצת יותר";
-      minAngle = 180;
+    let hint = frame;
+    if (!hint) {
+      if (shallowMsg > 0) {
+        shallowMsg--;
+        hint = "לא ירדת מספיק - כופף את המרפקים עד 90";
+      } else if (state === "down") {
+        hint = "יופי, עכשיו דחוף למעלה";
+      } else if (ang < 145) {
+        hint = "עוד קצת למטה";
+      }
     }
-    return { rep: false, hint, depth, ready: true };
+    return { rep, hint, depth, ready: true };
   };
 }
 
 function makeJackCounter() {
   let state = "closed";
   return function step(lm) {
+    const frame = framingHint(lm);
     if (!visible(lm, L.shoulderL, L.shoulderR, L.wristL, L.wristR, L.ankleL, L.ankleR)) {
-      return { rep: false, hint: "התרחק מהמצלמה עד שכל הגוף נראה", depth: 0, ready: false };
+      return { rep: false, hint: frame || "התרחק עד שכל הגוף נראה", depth: 0, ready: false };
     }
+    if (frame) return { rep: false, hint: frame, depth: 0, ready: false };
     const shoulderY = (lm[L.shoulderL].y + lm[L.shoulderR].y) / 2;
     const wristY = (lm[L.wristL].y + lm[L.wristR].y) / 2;
     const shoulderSpan = Math.abs(lm[L.shoulderL].x - lm[L.shoulderR].x) || 0.001;
@@ -169,15 +237,20 @@ function makeJackCounter() {
  */
 function makeWallSitHold() {
   return function step(lm) {
+    const frame = framingHint(lm);
     const side = bestSide(lm, [L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]);
-    if (!side) return { holding: false, hint: "עמוד כך שכל הגוף נכנס למסך", angle: null, ready: false };
+    if (!side) {
+      return { holding: false, hint: frame || "עמוד מהצד כדי שאראה את הברכיים", angle: null, ready: false };
+    }
     const ang = angleAt(lm[side[0]], lm[side[1]], lm[side[2]]);
-    if (ang === null) return { holding: false, hint: null, angle: null, ready: false };
+    if (ang === null) return { holding: false, hint: frame, angle: null, ready: false };
     // Accept 70-115 deg as "wall sit" - roughly a right angle at the knees.
-    const holding = ang >= 70 && ang <= 115;
-    let hint = null;
-    if (!holding) {
-      if (ang > 115) hint = "רד יותר, שהברכיים יהיו בזווית 90 מעלות";
+    // Framing problems block the hold, otherwise you could bank seconds while
+    // half out of shot.
+    const holding = !frame && ang >= 70 && ang <= 115;
+    let hint = frame;
+    if (!hint) {
+      if (ang > 115) hint = "רד יותר - הברכיים ב-90 מעלות";
       else if (ang < 70) hint = "אתה נמוך מדי, עלה מעט";
     }
     return { holding, hint, angle: ang, ready: true };
@@ -235,12 +308,167 @@ function makeHighKneeCounter() {
   };
 }
 
+// Sit-ups - lying on your back, the torso folds up. Measured at the hip
+// (shoulder-hip-knee): ~150 deg lying flat, ~75 deg sitting up.
+function makeSitupCounter() {
+  let state = "down";
+  let shallowMsg = 0;
+  let minAngle = 180;
+  return function step(lm) {
+    const frame = framingHint(lm);
+    const side = bestSide(lm, [L.shoulderL, L.hipL, L.kneeL], [L.shoulderR, L.hipR, L.kneeR]);
+    if (!side) {
+      return { rep: false, hint: frame || "שכב עם הצד למצלמה", depth: 0, ready: false };
+    }
+    const ang = angleAt(lm[side[0]], lm[side[1]], lm[side[2]]);
+    if (ang === null) return { rep: false, hint: frame, depth: 0, ready: false };
+
+    const depth = Math.min(1, Math.max(0, (150 - ang) / 70));
+
+    let rep = false;
+    if (state === "down") {
+      if (ang < minAngle) minAngle = ang;
+      if (ang < 85) state = "up";
+      else if (ang > 135 && minAngle < 115 && minAngle > 85) {
+        shallowMsg = 60;
+        minAngle = 180;
+      }
+    } else if (ang > 135) {
+      state = "down";
+      minAngle = 180;
+      rep = true;
+    }
+
+    let hint = frame;
+    if (!hint) {
+      if (shallowMsg > 0) {
+        shallowMsg--;
+        hint = "לא עלית מספיק - תתקרב יותר לברכיים";
+      } else if (state === "up") hint = "יופי, עכשיו רד לאט";
+      else if (ang < 130) hint = "עוד קצת למעלה";
+    }
+    return { rep, hint, depth, ready: true };
+  };
+}
+
+// Glute bridge - lying on your back, hips push up. Same hip angle as a
+// sit-up but the opposite direction: ~120 deg hips down, ~165 straight.
+function makeBridgeCounter() {
+  let state = "down";
+  return function step(lm) {
+    const frame = framingHint(lm);
+    const side = bestSide(lm, [L.shoulderL, L.hipL, L.kneeL], [L.shoulderR, L.hipR, L.kneeR]);
+    if (!side) {
+      return { rep: false, hint: frame || "שכב עם הצד למצלמה", depth: 0, ready: false };
+    }
+    const ang = angleAt(lm[side[0]], lm[side[1]], lm[side[2]]);
+    if (ang === null) return { rep: false, hint: frame, depth: 0, ready: false };
+
+    const depth = Math.min(1, Math.max(0, (ang - 110) / 55));
+
+    let rep = false;
+    if (state === "down" && ang > 160) state = "up";
+    else if (state === "up" && ang < 125) {
+      state = "down";
+      rep = true;
+    }
+
+    let hint = frame;
+    if (!hint) {
+      if (state === "up") hint = "יופי, עכשיו רד לאט";
+      else if (ang > 140) hint = "עוד קצת למעלה - קו ישר מהברך לכתף";
+      else hint = "דחוף את האגן למעלה";
+    }
+    return { rep, hint, depth, ready: true };
+  };
+}
+
+// Tricep dips - same elbow hinge as a push-up, but you're upright with hands
+// behind you, so the "down" threshold is shallower.
+function makeDipCounter() {
+  let state = "up";
+  return function step(lm) {
+    const frame = framingHint(lm);
+    const side = bestSide(
+      lm,
+      [L.shoulderL, L.elbowL, L.wristL],
+      [L.shoulderR, L.elbowR, L.wristR]
+    );
+    if (!side) {
+      return { rep: false, hint: frame || "שב עם הצד למצלמה", depth: 0, ready: false };
+    }
+    const ang = angleAt(lm[side[0]], lm[side[1]], lm[side[2]]);
+    if (ang === null) return { rep: false, hint: frame, depth: 0, ready: false };
+
+    const depth = Math.min(1, Math.max(0, (170 - ang) / 70));
+
+    let rep = false;
+    if (state === "up" && ang < 110) state = "down";
+    else if (state === "down" && ang > 158) {
+      state = "up";
+      rep = true;
+    }
+
+    let hint = frame;
+    if (!hint) {
+      if (state === "down") hint = "יופי, עכשיו דחוף למעלה";
+      else if (ang < 150) hint = "עוד קצת למטה";
+    }
+    return { rep, hint, depth, ready: true };
+  };
+}
+
+// Squat jumps - a squat that must go deeper AND come back up fast, so a slow
+// grind doesn't pass as a jump.
+function makeSquatJumpCounter() {
+  let state = "up";
+  let wentDownAt = 0;
+  return function step(lm) {
+    const frame = framingHint(lm);
+    const side = bestSide(lm, [L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]);
+    if (!side) {
+      return { rep: false, hint: frame || "עמוד כך שכל הגוף נכנס למסך", depth: 0, ready: false };
+    }
+    const ang = angleAt(lm[side[0]], lm[side[1]], lm[side[2]]);
+    if (ang === null) return { rep: false, hint: frame, depth: 0, ready: false };
+
+    const depth = Math.min(1, Math.max(0, (170 - ang) / 80));
+    const now = Date.now();
+
+    let rep = false;
+    let slow = false;
+    if (state === "up") {
+      if (ang < 95) {
+        state = "down";
+        wentDownAt = now;
+      }
+    } else if (ang > 165) {
+      state = "up";
+      // A real jump snaps back up; anything over 1.4s is a plain squat.
+      if (now - wentDownAt <= 1400) rep = true;
+      else slow = true;
+    }
+
+    let hint = frame;
+    if (!hint) {
+      if (slow) hint = "זה היה סקוואט רגיל - תתפוצץ למעלה מהר";
+      else if (state === "down") hint = "עכשיו קפוץ!";
+      else if (ang < 150) hint = "רד עמוק ואז קפוץ";
+    }
+    return { rep, hint, depth, ready: true };
+  };
+}
+
 export const COUNTERS = {
   squat: makeSquatCounter,
   pushup: makePushupCounter,
   jack: makeJackCounter,
   lunge: makeLungeCounter,
   highknee: makeHighKneeCounter,
+  situp: makeSitupCounter,
+  bridge: makeBridgeCounter,
+  dip: makeDipCounter,
+  squatjump: makeSquatJumpCounter,
 };
 
 export const HOLDS = {

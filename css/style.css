@@ -717,6 +717,25 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .wide-btn.danger:active { background: rgba(198, 90, 74, 0.25); }
 
+/* ---------- Bonus slots ---------- */
+
+.bonus { border-color: color-mix(in srgb, var(--volt) 26%, var(--line)); }
+
+.bonus-row.is-done { opacity: 0.5; }
+
+.row-pts.is-bonus { color: var(--volt); }
+
+.bonus .launch.is-cam { color: var(--volt); }
+
+.wide-btn.quiet {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--bone-3);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 10px;
+}
+
 /* ---------- Excuse card ---------- */
 
 .excuse .wide-btn {
