@@ -126,6 +126,18 @@
         <p class="nudge-text" id="nudgeText"></p>
       </section>
 
+      <section class="panel excuse" id="excusePanel">
+        <div class="panel-head">
+          <h2 class="panel-title">תסביר למה לא</h2>
+        </div>
+        <p class="panel-body">אתה יכול לפתוח, לרשום למה אתה לא יכול היום, והמאמן הפנימי יגיד אם זה בסדר או שצריך להשלים בכפול.</p>
+        <button class="wide-btn" id="openExcuseBtn">
+          <svg class="ico"><use href="#i-hand"/></svg>
+          <span>יש לי תירוץ</span>
+        </button>
+        <div class="verdict" id="verdictBox" hidden></div>
+      </section>
+
       <section class="panel">
         <div class="panel-head">
           <h2 class="panel-title">היעד שלך</h2>
@@ -164,9 +176,16 @@
         </button>
       </section>
 
-      <div class="dev-tools">
-        <button class="reset-link" id="resetBtn">איפוס הכל (לבדיקה)</button>
-      </div>
+      <section class="panel dev-panel">
+        <div class="panel-head">
+          <h2 class="panel-title">כלי בדיקה</h2>
+          <span class="dev-tag">זמני</span>
+        </div>
+        <p class="panel-body">כפתור לאיפוס מלא של האפליקציה בזמן פיתוח. יוסר בגרסה הסופית.</p>
+        <button class="wide-btn danger" id="resetBtn">
+          <span>אפס הכל</span>
+        </button>
+      </section>
 
     </section>
 
@@ -203,6 +222,7 @@
         <div class="panel-head">
           <h2 class="panel-title">הנתונים שלך</h2>
         </div>
+        <div class="seg" id="recordSeg" role="tablist"></div>
         <div class="records" id="recordGrid"></div>
       </section>
 

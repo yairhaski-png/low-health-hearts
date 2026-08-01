@@ -2,8 +2,10 @@
   "use strict";
 
   const KEY = "kesher-state";
-  const SCHEMA = 5;
+  const SCHEMA = 6;
   const CHART_DAYS = 14;
+  // Minimum distance the phone must have moved for a ריצה workout to count.
+  const RUN_MIN_METERS_PER_10MIN = 600;
 
   const DEFAULT_ROUTINE = [
     { id: "wake", label: "השכמה", time: "" },
@@ -24,8 +26,9 @@
     { id: "squat", title: "סקוואטים", verify: "camera", exercise: "squat", target: 15, points: 15 },
     { id: "pushup", title: "שכיבות סמיכה", verify: "camera", exercise: "pushup", target: 10, points: 20 },
     { id: "jack", title: "קפיצות פישוק", verify: "camera", exercise: "jack", target: 25, points: 12 },
+    { id: "wallsit", title: "סקוואט קיר", verify: "hold", hold: "wallsit", target: 30, points: 14 },
     { id: "plank", title: "פלאנק", verify: "timer", target: 45, points: 12 },
-    { id: "run", title: "ריצה או הליכה", verify: "timer", target: 600, points: 22 },
+    { id: "run", title: "ריצה או הליכה", verify: "run", target: 600, minMeters: RUN_MIN_METERS_PER_10MIN, points: 22 },
   ];
 
   const BASE_STORE = [
@@ -60,6 +63,11 @@
       remindOn: false,
       routine: DEFAULT_ROUTINE.map((r) => ({ ...r })),
       workoutCount: {},
+      // Excuse verdicts turn into a per-day penalty multiplier applied to the
+      // very next workout, matching what the coach said.
+      penalty: 1.0,
+      penaltyDate: null,
+      excuseHistory: [],
     };
   }
 
@@ -75,12 +83,27 @@
     if (!saved) return freshState();
     if (saved.v === SCHEMA) return saved;
 
-    // v3/v4 forward migrations preserve everything the user set up.
-    if (saved.v === 3 || saved.v === 4) {
+    // v3/v4/v5 forward migrations preserve everything the user set up.
+    if (saved.v === 3 || saved.v === 4 || saved.v === 5) {
       saved.log = saved.log || {};
       saved.bestStreak = saved.bestStreak || saved.streak || 0;
       saved.routine = saved.routine || DEFAULT_ROUTINE.map((r) => ({ ...r }));
       saved.workoutCount = saved.workoutCount || {};
+      saved.penalty = saved.penalty || 1.0;
+      saved.penaltyDate = saved.penaltyDate || null;
+      saved.excuseHistory = saved.excuseHistory || [];
+      // Ensure new base challenges (wallsit) exist without duplicating anything the user had.
+      const have = new Set(saved.challenges.map((c) => c.id));
+      for (const base of BASE_CHALLENGES) {
+        if (!have.has(base.id)) saved.challenges.push({ ...base });
+      }
+      // Upgrade the run challenge to gps verification if the saved copy
+      // still says "timer" - preserves the user's own points/target.
+      const run = saved.challenges.find((c) => c.id === "run");
+      if (run && run.verify !== "run") {
+        run.verify = "run";
+        run.minMeters = run.minMeters || RUN_MIN_METERS_PER_10MIN;
+      }
       saved.v = SCHEMA;
       return saved;
     }
@@ -139,7 +162,24 @@
     return Math.min(c.points, (gap - BOOST_AFTER_DAYS + 1) * BOOST_PER_DAY);
   }
 
-  const worthOf = (c) => c.points + boostOf(c);
+  // A penalty applies to the very next workout only, and covers both the
+  // reward (more points earned) AND the effort (higher rep count / longer
+  // time) - so "פי 1.5" means you actually work 1.5x harder.
+  function activePenalty() {
+    if (state.penaltyDate === today() && state.penalty > 1) return state.penalty;
+    return 1;
+  }
+
+  function worthOf(c) {
+    const base = c.points + boostOf(c);
+    return Math.round(base * activePenalty());
+  }
+
+  function scaledTarget(c) {
+    const mult = activePenalty();
+    if (mult <= 1) return c.target;
+    return Math.ceil(c.target * mult);
+  }
 
   function topBoosted() {
     let best = null;
@@ -154,16 +194,20 @@
 
   const MODE = {
     camera: { icon: "i-camera", text: "המצלמה סופרת" },
-    timer: { icon: "i-timer", text: "טיימר" },
+    hold:   { icon: "i-camera", text: "המצלמה מוודאת" },
+    timer:  { icon: "i-timer", text: "טיימר" },
+    run:    { icon: "i-timer", text: "GPS + טיימר" },
     manual: { icon: "i-hand", text: "סימון ידני" },
   };
 
   const modeOf = (c) => MODE[c.verify] || MODE.manual;
 
   function targetLabel(c) {
-    if (c.verify === "camera") return c.target + " חזרות";
-    if (c.verify === "timer") {
-      return c.target >= 60 ? Math.round(c.target / 60) + " דקות" : c.target + " שניות";
+    const t = scaledTarget(c);
+    if (c.verify === "camera") return t + " חזרות";
+    if (c.verify === "hold") return t + " שניות החזקה";
+    if (c.verify === "timer" || c.verify === "run") {
+      return t >= 60 ? Math.round(t / 60) + " דקות" : t + " שניות";
     }
     return "";
   }
@@ -279,15 +323,47 @@
     }
     $("hudPoints").textContent = state.points;
     $("hudStreakNum").textContent = state.streak;
+    const streakVal = document.querySelector(".score-val.streak");
+    if (streakVal) streakVal.classList.toggle("is-dead", state.streak === 0);
     renderNextUp();
     renderToday();
     renderNudge();
+    renderExcuse();
     renderGoal();
     renderStats();
     renderRoutine();
     renderProgress();
     renderStore();
     renderRemind();
+  }
+
+  function todaysExcuse() {
+    const t = today();
+    const h = state.excuseHistory || [];
+    for (let i = h.length - 1; i >= 0; i--) if (h[i].date === t) return h[i];
+    return null;
+  }
+
+  function renderExcuse() {
+    const box = $("verdictBox");
+    const btn = $("openExcuseBtn");
+    const t = todaysExcuse();
+    if (!t) {
+      box.hidden = true;
+      btn.disabled = false;
+      btn.querySelector("span").textContent = "יש לי תירוץ";
+      return;
+    }
+    const tone = t.verdict === "legit" ? "good" : t.verdict === "weak" ? "warn" : "bad";
+    const label =
+      t.verdict === "legit" ? "בסדר גמור להיום"
+      : t.verdict === "weak" ? "נבדק - האימון הבא בפי 1.25"
+      : "נקבע תירוץ - האימון הבא בפי 1.5";
+    box.hidden = false;
+    box.className = "verdict " + tone;
+    box.textContent = label;
+    btn.disabled = true;
+    btn.querySelector("span").textContent = "תירוץ להיום כבר נרשם";
   }
 
   const pending = () => state.challenges.filter((c) => !state.doneToday.includes(c.id));
@@ -353,8 +429,16 @@
   }
 
   function renderNudge() {
-    const c = topBoosted();
     const panel = $("nudgePanel");
+    const mult = activePenalty();
+    if (mult > 1) {
+      panel.hidden = false;
+      const percent = Math.round(mult * 100);
+      $("nudgeText").innerHTML =
+        `נקבע לך תירוץ שדורש השלמה. האימון הבא יהיה <b>פי ${mult}</b> - גם הכפול נקודות וגם ${percent}% מהיעד. אחרי אימון אחד כזה, הכל חוזר לרגיל.`;
+      return;
+    }
+    const c = topBoosted();
     if (!c || state.doneToday.includes(c.id)) {
       panel.hidden = true;
       return;
@@ -407,6 +491,7 @@
     return out;
   }
 
+  let chartAnimated = false;
   function renderProgress() {
     $("ptsBalance").textContent = state.points;
     $("ptsEarned").textContent = "צברת " + pts(state.totalEarned) + " מאז שהתחלת";
@@ -414,6 +499,8 @@
     const days = lastDays(CHART_DAYS);
     const peak = Math.max(...days.map((d) => d.p), 0);
     const t = today();
+    const shouldAnimate = !chartAnimated;
+    chartAnimated = true;
 
     const plot = $("chartPlot");
     const axis = $("chartAxis");
@@ -437,6 +524,12 @@
       fill.className =
         "bar-fill" + (d.p === 0 ? " is-zero" : "") + (isToday && d.p > 0 ? " is-today" : "");
       fill.style.height = d.p === 0 ? "3px" : Math.max(6, h) + "%";
+      if (shouldAnimate) {
+        // Stagger the grow-in from left-to-right on first paint only.
+        fill.style.animationDelay = ((CHART_DAYS - 1 - days.indexOf(d)) * 26) + "ms";
+      } else {
+        fill.style.animation = "none";
+      }
       btn.appendChild(fill);
       btn.onclick = () => pickDay(d, btn);
       plot.appendChild(btn);
@@ -470,10 +563,44 @@
     renderBreakdown();
   }
 
+  let recordFilter = "all";
   function renderRecords() {
+    // Segmented tabs: הכל first, then each exercise the user has ever done.
+    const seg = $("recordSeg");
+    const options = [{ id: "all", title: "הכל" }];
+    for (const c of state.challenges) {
+      const wc = state.workoutCount && state.workoutCount[c.id];
+      if (wc && wc.n > 0) options.push({ id: c.id, title: c.title });
+    }
+    // If the current filter was removed (challenge deleted), fall back to all.
+    if (!options.some((o) => o.id === recordFilter)) recordFilter = "all";
+
+    seg.innerHTML = options
+      .map(
+        (o) =>
+          `<button class="seg-btn${o.id === recordFilter ? " is-on" : ""}" data-id="${o.id}">${esc(o.title)}</button>`
+      )
+      .join("");
+    for (const b of seg.querySelectorAll(".seg-btn")) {
+      b.onclick = () => {
+        recordFilter = b.dataset.id;
+        renderRecords();
+      };
+    }
+
+    const recs = recordFilter === "all" ? overallRecords() : perExerciseRecords(recordFilter);
+    $("recordGrid").innerHTML = recs
+      .map(
+        ([v, k]) =>
+          `<div class="stat"><span class="stat-val">${esc(String(v))}</span><span class="stat-key">${esc(k)}</span></div>`
+      )
+      .join("");
+  }
+
+  function overallRecords() {
     const totalWorkouts = Object.values(state.log).reduce((s, e) => s + e.n, 0);
     const activeDays = Object.values(state.log).filter((e) => e.n > 0).length;
-    const recs = [
+    return [
       [state.streak, "רצף נוכחי"],
       [state.bestStreak || 0, "הרצף הכי ארוך"],
       [totalWorkouts, "אימונים בסך הכל"],
@@ -481,12 +608,23 @@
       [activeDays, "ימים פעילים"],
       [state.redeemed.length, "פרסים שקנית"],
     ];
-    $("recordGrid").innerHTML = recs
-      .map(
-        ([v, k]) =>
-          `<div class="stat"><span class="stat-val">${esc(String(v))}</span><span class="stat-key">${esc(k)}</span></div>`
-      )
-      .join("");
+  }
+
+  function perExerciseRecords(id) {
+    const c = state.challenges.find((x) => x.id === id);
+    const wc = (state.workoutCount && state.workoutCount[id]) || { n: 0, r: 0, p: 0 };
+    // Best rep count OR seconds isn't tracked per-session yet - show what we have.
+    const avgReps = wc.n > 0 ? Math.round(wc.r / wc.n) : 0;
+    const avgPts = wc.n > 0 ? Math.round(wc.p / wc.n) : 0;
+    const isCam = c && (c.verify === "camera" || c.verify === "hold");
+    return [
+      [wc.n, "פעמים עשית"],
+      [wc.p, "נקודות מזה"],
+      [isCam ? wc.r : "-", "חזרות נספרו"],
+      [avgReps || "-", "ממוצע לאימון"],
+      [avgPts, "ממוצע נקודות"],
+      [c ? c.points : 0, "נקודות בסיס"],
+    ];
   }
 
   function renderBreakdown() {
@@ -502,11 +640,16 @@
     for (const { c, wc } of rows) {
       const li = document.createElement("li");
       li.className = "breakdown-item";
-      const repsLabel = c.verify === "camera" && wc.r > 0 ? `<small>${wc.r} חזרות</small>` : "";
+      const sub =
+        c.verify === "camera" && wc.r > 0
+          ? `<span class="breakdown-sub">${wc.r} חזרות בסך הכל</span>`
+          : "";
       li.innerHTML = `
-        <span class="breakdown-title">${esc(c.title)}</span>
-        <span class="breakdown-count">${wc.n}${repsLabel}</span>
-        <span class="breakdown-pts">${wc.p} נק'</span>
+        <div class="breakdown-title"><span>${esc(c.title)}</span>${sub}</div>
+        <div class="breakdown-nums">
+          <span class="breakdown-count">${workouts(wc.n)}</span>
+          <span class="breakdown-pts">${wc.p} נק'</span>
+        </div>
       `;
       list.appendChild(li);
     }
@@ -612,6 +755,13 @@
     wc.r += reps || 0;
     wc.p += gained;
 
+    // The penalty is a one-shot: once you serve it (do the harder rep),
+    // the debt is paid and further workouts today are at normal cost.
+    if (activePenalty() > 1) {
+      state.penalty = 1.0;
+      state.penaltyDate = null;
+    }
+
     save();
     render();
     cheer();
@@ -713,6 +863,68 @@
     );
   }
 
+  async function openExcuseSheet() {
+    if (todaysExcuse()) return; // one excuse per day is the whole point
+    const { classifyExcuse } = await import("./excuse.js");
+    openSheet(
+      `<h2 class="sheet-title">מה קרה היום?</h2>
+       <p class="sheet-note">כתוב במשפט או שניים למה אתה לא מתאמן. תכתוב אמת.</p>
+       <textarea class="field excuse-input" id="exIn" rows="3" placeholder="לדוגמה: יש לי חום ולא ישנתי"></textarea>
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="exNo">ביטול</button>
+         <button class="btn btn-fill" id="exYes">שלח למאמן</button>
+       </div>`,
+      (r) => {
+        const inp = r.querySelector("#exIn");
+        inp.focus();
+        r.querySelector("#exNo").onclick = closeSheet;
+        r.querySelector("#exYes").onclick = () => {
+          const text = inp.value.trim();
+          if (!text) return;
+          const v = classifyExcuse(text);
+          applyExcuse(text, v);
+          closeSheet();
+          setTimeout(() => showExcuseVerdict(v), 50);
+        };
+      }
+    );
+  }
+
+  function applyExcuse(text, v) {
+    const t = today();
+    state.excuseHistory = state.excuseHistory || [];
+    state.excuseHistory.push({ date: t, text, verdict: v.verdict, penalty: v.penalty });
+    if (state.excuseHistory.length > 30) state.excuseHistory = state.excuseHistory.slice(-30);
+    if (v.verdict === "legit") {
+      // No penalty and the streak is protected for the day.
+      state.penalty = 1.0;
+      state.penaltyDate = null;
+      state.lastDoneDate = t; // mark today as "handled" so streak doesn't die
+    } else {
+      state.penalty = v.penalty;
+      state.penaltyDate = t;
+    }
+    save();
+    render();
+  }
+
+  function showExcuseVerdict(v) {
+    const toneEmoji = { good: "✓", warn: "!", bad: "✕" };
+    openSheet(
+      `<h2 class="sheet-title verdict-${v.tone}">
+         <span class="verdict-mark">${toneEmoji[v.tone] || ""}</span>
+         ${esc(v.label)}
+       </h2>
+       <p class="sheet-note verdict-reply">${esc(v.reply)}</p>
+       <div class="sheet-actions">
+         <button class="btn btn-fill" id="vOk">הבנתי</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#vOk").onclick = closeSheet;
+      }
+    );
+  }
+
   function routineSheet() {
     const rows = state.routine
       .map(
@@ -780,6 +992,8 @@
     if (!c || state.doneToday.includes(id)) return;
     primeAudio(); // must happen inside the tap for iOS to allow sound later
     if (c.verify === "camera") openCamera(c);
+    else if (c.verify === "hold") openHold(c);
+    else if (c.verify === "run") openRun(c);
     else if (c.verify === "timer") openTimer(c);
     else award(c, 0);
   }
@@ -788,10 +1002,11 @@
 
   function openTimer(c) {
     let tick = null;
+    const target = scaledTarget(c);
     openSheet(
       `<h2 class="sheet-title">${esc(c.title)}</h2>
        <p class="sheet-note">הטיימר רץ על השעון האמיתי. השאר את המסך פתוח עד הסוף.</p>
-       <div class="win"><span class="win-num" id="tClock" dir="ltr">${clock(c.target)}</span></div>
+       <div class="win"><span class="win-num" id="tClock" dir="ltr">${clock(target)}</span></div>
        <div class="sheet-actions">
          <button class="btn btn-quiet" id="tNo">ביטול</button>
          <button class="btn btn-fill" id="tGo">התחל</button>
@@ -806,12 +1021,13 @@
           const started = Date.now();
           keepAwake();
           tick = setInterval(() => {
-            const left = Math.max(0, c.target - Math.floor((Date.now() - started) / 1000));
+            const left = Math.max(0, target - Math.floor((Date.now() - started) / 1000));
             face.textContent = clock(left);
             if (left === 0) {
               clearInterval(tick);
               releaseAwake();
               onSheetClose = null;
+              closeSheet();
               award(c, 0);
             }
           }, 200);
@@ -856,12 +1072,13 @@
 
   async function openCamera(c) {
     const firstRun = !state.sawCamera;
+    const target = scaledTarget(c);
 
     cam.root.hidden = false;
     keepAwake();
     cam.name.textContent = c.title;
     cam.num.textContent = "0";
-    cam.of.textContent = "/ " + c.target;
+    cam.of.textContent = "/ " + target;
     // The detection engine is a one-time ~17MB download; say so rather than
     // leaving a silent spinner on a slow connection.
     cam.hint.textContent = firstRun
@@ -880,7 +1097,7 @@
         video: cam.video,
         canvas: cam.canvas,
         exercise: c.exercise,
-        target: c.target,
+        target,
         onUpdate: ({ count, hint, depth, ready }) => {
           if (count !== last) {
             last = count;
@@ -888,7 +1105,7 @@
             cam.num.classList.remove("pop");
             void cam.num.offsetWidth;
             cam.num.classList.add("pop");
-            blip(620 + Math.min(count, c.target) * 12);
+            blip(620 + Math.min(count, target) * 12);
             if (navigator.vibrate) navigator.vibrate(28);
           }
           cam.depth.style.width = Math.round((depth || 0) * 100) + "%";
@@ -902,8 +1119,6 @@
         onError: (kind) => {
           releaseAwake();
           if (kind === "camera") {
-            // A known iOS quirk: the camera sometimes only works from Safari
-            // itself, not from the icon on the home screen.
             cam.hint.textContent =
               "אין גישה למצלמה. אשר בהגדרות, או פתח את האתר ישירות בספארי במקום מהאייקון.";
           } else if (kind === "model") {
@@ -919,6 +1134,153 @@
       releaseAwake();
       cam.hint.textContent = "זיהוי התנועה לא נתמך בדפדפן הזה. אפשר לסמן ידנית.";
     }
+  }
+
+  async function openHold(c) {
+    const target = scaledTarget(c);
+    cam.root.hidden = false;
+    keepAwake();
+    cam.name.textContent = c.title;
+    cam.num.textContent = "00";
+    cam.of.textContent = "/ " + target + " שניות";
+    cam.hint.textContent = "מכינים את המצלמה…";
+    cam.depth.style.width = "0%";
+    cam.manual.onclick = () => {
+      closeCamera();
+      award(c, 0);
+    };
+
+    try {
+      const { startHoldSession } = await import("./pose.js");
+      camStop = await startHoldSession({
+        video: cam.video,
+        canvas: cam.canvas,
+        hold: c.hold,
+        target,
+        onUpdate: ({ elapsed, holding, hint }) => {
+          const secs = Math.floor(elapsed);
+          cam.num.textContent = String(secs).padStart(2, "0");
+          cam.depth.style.width = Math.min(100, (elapsed / target) * 100) + "%";
+          if (hint) cam.hint.textContent = hint;
+          else if (holding) cam.hint.textContent = "יופי, החזק כך";
+          else cam.hint.textContent = "רד לזווית של 90 מעלות";
+        },
+        onDone: () => {
+          closeCamera();
+          award(c, 0);
+        },
+        onError: (kind) => {
+          releaseAwake();
+          if (kind === "camera") cam.hint.textContent = "אין גישה למצלמה.";
+          else if (kind === "model") cam.hint.textContent = "לא הצלחתי לטעון את זיהוי התנועה.";
+          else cam.hint.textContent = "משהו השתבש עם המצלמה.";
+        },
+      });
+      state.sawCamera = true;
+      save();
+    } catch (err) {
+      releaseAwake();
+      cam.hint.textContent = "זיהוי התנועה לא נתמך בדפדפן הזה.";
+    }
+  }
+
+  // ---------- Run tracker (GPS + timer) ----------
+
+  function openRun(c) {
+    const target = scaledTarget(c);
+    const minMeters = Math.ceil((c.minMeters || RUN_MIN_METERS_PER_10MIN) * (target / 600));
+    let gpsStop = null;
+    let tick = null;
+    let started = null;
+    let liveMeters = 0;
+    let liveAcc = null;
+
+    openSheet(
+      `<h2 class="sheet-title">${esc(c.title)}</h2>
+       <p class="sheet-note">נבדוק גם שהטלפון באמת זז, לא רק שהזמן עבר. אשר גישה למיקום כשהמכשיר ישאל.</p>
+       <div class="run-face">
+         <div class="run-clock" id="rClock" dir="ltr">${clock(target)}</div>
+         <div class="run-dist"><span id="rMeters">0</span> / ${minMeters} מ'</div>
+         <div class="run-acc" id="rAcc">מכינים GPS…</div>
+       </div>
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="rNo">ביטול</button>
+         <button class="btn btn-fill" id="rGo">התחל</button>
+       </div>`,
+      (r) => {
+        const clockEl = r.querySelector("#rClock");
+        const metersEl = r.querySelector("#rMeters");
+        const accEl = r.querySelector("#rAcc");
+
+        const cleanup = () => {
+          if (tick) clearInterval(tick);
+          if (gpsStop) gpsStop();
+          gpsStop = null;
+          releaseAwake();
+        };
+
+        r.querySelector("#rNo").onclick = () => {
+          cleanup();
+          closeSheet();
+        };
+
+        r.querySelector("#rGo").onclick = async (ev) => {
+          const btn = ev.currentTarget;
+          btn.disabled = true;
+          btn.textContent = "רץ";
+          keepAwake();
+          started = Date.now();
+          onSheetClose = cleanup;
+
+          const { startRunTracker } = await import("./gps.js");
+          gpsStop = startRunTracker({
+            onUpdate: ({ meters, accuracy, moving }) => {
+              liveMeters = meters;
+              liveAcc = accuracy;
+              metersEl.textContent = Math.round(meters);
+              if (accuracy > 25) accEl.textContent = `GPS: דיוק ${Math.round(accuracy)}מ' - אולי בחוץ עדיף`;
+              else if (moving) accEl.textContent = "טוב, ממשיכים לזוז";
+              else accEl.textContent = "מזהה תנועה…";
+            },
+            onError: (kind) => {
+              if (kind === "denied") accEl.textContent = "אין הרשאת מיקום. עצור וסמן ידנית אם צריך.";
+              else if (kind === "unsupported") accEl.textContent = "המכשיר לא תומך ב-GPS.";
+              else accEl.textContent = "בעיה עם ה-GPS. ננסה בכל זאת.";
+            },
+          });
+
+          tick = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - started) / 1000);
+            const left = Math.max(0, target - elapsed);
+            clockEl.textContent = clock(left);
+            if (left === 0) {
+              if (liveMeters >= minMeters) {
+                cleanup();
+                onSheetClose = null;
+                closeSheet();
+                award(c, 0);
+              } else {
+                accEl.textContent = `הזמן נגמר אבל זזת רק ${Math.round(liveMeters)}מ' מ-${minMeters}. תמשיך לרוץ.`;
+                // keep timer at 00 but keep GPS running until they hit min or cancel
+                clockEl.textContent = "00:00";
+                if (liveMeters >= minMeters) {
+                  cleanup();
+                  onSheetClose = null;
+                  closeSheet();
+                  award(c, 0);
+                }
+              }
+            } else if (liveMeters >= minMeters && elapsed >= target * 0.7) {
+              // If they hit distance and used ≥70% of time, count it - accepts fast runs.
+              cleanup();
+              onSheetClose = null;
+              closeSheet();
+              award(c, 0);
+            }
+          }, 300);
+        };
+      }
+    );
   }
 
   // ---------- Reminders ----------
@@ -996,6 +1358,7 @@
   $("addChallengeBtn").onclick = addChallengeSheet;
   $("addItemBtn").onclick = addRewardSheet;
   $("editRoutineBtn").onclick = routineSheet;
+  $("openExcuseBtn").onclick = openExcuseSheet;
 
   // Dev-only reset - removed before shipping.
   $("resetBtn").onclick = () => {

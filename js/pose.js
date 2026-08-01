@@ -161,10 +161,37 @@ function makeJackCounter() {
   };
 }
 
+/**
+ * Wall-sit hold detector. Not a counter - it reports whether the person is
+ * currently in the "held" position (knee bent ~90 deg). The caller ticks a
+ * timer only while holding is true, so no seconds are earned by cheating.
+ * Returns { holding: bool, hint: string|null, angle: number|null, ready: bool }.
+ */
+function makeWallSitHold() {
+  return function step(lm) {
+    const side = bestSide(lm, [L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]);
+    if (!side) return { holding: false, hint: "עמוד כך שכל הגוף נכנס למסך", angle: null, ready: false };
+    const ang = angleAt(lm[side[0]], lm[side[1]], lm[side[2]]);
+    if (ang === null) return { holding: false, hint: null, angle: null, ready: false };
+    // Accept 70-115 deg as "wall sit" - roughly a right angle at the knees.
+    const holding = ang >= 70 && ang <= 115;
+    let hint = null;
+    if (!holding) {
+      if (ang > 115) hint = "רד יותר, שהברכיים יהיו בזווית 90 מעלות";
+      else if (ang < 70) hint = "אתה נמוך מדי, עלה מעט";
+    }
+    return { holding, hint, angle: ang, ready: true };
+  };
+}
+
 export const COUNTERS = {
   squat: makeSquatCounter,
   pushup: makePushupCounter,
   jack: makeJackCounter,
+};
+
+export const HOLDS = {
+  wallsit: makeWallSitHold,
 };
 
 let landmarkerPromise = null;
@@ -333,6 +360,123 @@ export async function startRepSession({
     onUpdate && onUpdate({ count, hint: out.hint, depth: out.depth, ready: out.ready });
   }
 
+  rafId = requestAnimationFrame(frame);
+  return stop;
+}
+
+/**
+ * Runs a camera-verified HOLD session (wall sit).
+ * The timer only advances while the pose is actually held.
+ *
+ * onUpdate({ elapsed, target, holding, hint }) fires every frame.
+ * onDone() fires once elapsed >= target.
+ */
+export async function startHoldSession({
+  video,
+  canvas,
+  hold,
+  target, // seconds of held-time required
+  onUpdate,
+  onDone,
+  onError,
+}) {
+  let stream = null;
+  let rafId = null;
+  let stopped = false;
+  let elapsedMs = 0;
+  let lastTick = null;
+  let lastVideoTime = -1;
+  const step = (HOLDS[hold] || makeWallSitHold)();
+
+  function stop() {
+    stopped = true;
+    if (rafId) cancelAnimationFrame(rafId);
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+  }
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false,
+    });
+  } catch (err) {
+    onError && onError("camera", err);
+    return stop;
+  }
+  if (stopped) { stream.getTracks().forEach((t) => t.stop()); return stop; }
+
+  video.srcObject = stream;
+  video.setAttribute("playsinline", "");
+  video.muted = true;
+  try { await video.play(); } catch (err) { onError && onError("play", err); stop(); return stop; }
+
+  let landmarker;
+  try { landmarker = await getLandmarker(); }
+  catch (err) { onError && onError("model", err); stop(); return stop; }
+  if (stopped) return stop;
+
+  const ctx = canvas.getContext("2d");
+
+  function drawSkeleton(lm) {
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.lineWidth = Math.max(2, w * 0.006);
+    ctx.strokeStyle = "#38E1D0";
+    ctx.fillStyle = "#38E1D0";
+    ctx.lineCap = "round";
+    for (const [a, b] of BONES) {
+      const pa = lm[a], pb = lm[b];
+      if (!pa || !pb) continue;
+      if ((pa.visibility ?? 1) < MIN_VISIBILITY || (pb.visibility ?? 1) < MIN_VISIBILITY) continue;
+      ctx.beginPath();
+      ctx.moveTo(pa.x * w, pa.y * h);
+      ctx.lineTo(pb.x * w, pb.y * h);
+      ctx.stroke();
+    }
+    const dotR = Math.max(3, w * 0.009);
+    for (const i of Object.values(L)) {
+      const p = lm[i];
+      if (!p || (p.visibility ?? 1) < MIN_VISIBILITY) continue;
+      ctx.beginPath();
+      ctx.arc(p.x * w, p.y * h, dotR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function frame() {
+    if (stopped) return;
+    rafId = requestAnimationFrame(frame);
+    if (video.readyState < 2) return;
+    if (canvas.width !== video.videoWidth && video.videoWidth) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
+    if (video.currentTime === lastVideoTime) return;
+    lastVideoTime = video.currentTime;
+
+    let result;
+    try { result = landmarker.detectForVideo(video, performance.now()); }
+    catch (err) { return; }
+
+    const lm = result && result.landmarks && result.landmarks[0];
+    const now = performance.now();
+    if (!lm) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      lastTick = now;
+      onUpdate && onUpdate({ elapsed: elapsedMs / 1000, target, holding: false, hint: "לא רואה אותך" });
+      return;
+    }
+    drawSkeleton(lm);
+    const out = step(lm);
+    if (lastTick !== null && out.holding) elapsedMs += now - lastTick;
+    lastTick = now;
+    onUpdate && onUpdate({ elapsed: elapsedMs / 1000, target, holding: out.holding, hint: out.hint });
+    if (elapsedMs / 1000 >= target) {
+      stop();
+      onDone && onDone();
+    }
+  }
   rafId = requestAnimationFrame(frame);
   return stop;
 }
