@@ -717,6 +717,71 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .wide-btn.danger:active { background: rgba(198, 90, 74, 0.25); }
 
+/* ---------- App gate ---------- */
+
+.gate-state {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--ink-3);
+}
+.gate-state .ico { width: 26px; height: 26px; }
+.gate-state.is-open { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+.gate-state.is-open .ico { color: var(--good); }
+.gate-state.is-shut .ico { color: var(--bone-3); }
+
+.gate-copy { display: flex; flex-direction: column; gap: 1px; }
+
+.gate-big {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 26px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.gate-state.is-open .gate-big { color: var(--good); }
+.gate-state.is-shut .gate-big { color: var(--bone-2); font-size: 20px; }
+
+.gate-sub { font-size: 12px; color: var(--bone-3); }
+
+/* ---------- Level up ---------- */
+
+.levelup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 12px 0 6px;
+}
+.levelup-from,
+.levelup-to {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 40px;
+  line-height: 1;
+}
+.levelup-from { color: var(--bone-3); text-decoration: line-through; }
+.levelup-to { color: var(--ember); }
+.levelup-arrow { color: var(--bone-3); font-size: 22px; }
+
+.steps {
+  margin: 0;
+  padding-inline-start: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 14px;
+  color: var(--bone-2);
+  line-height: 1.5;
+}
+.steps b { color: var(--bone); }
+
+.sheet-note.dim { color: var(--bone-3); font-size: 12.5px; }
+.sheet-note b { color: var(--bone); }
+
 /* ---------- Bonus slots ---------- */
 
 .bonus { border-color: color-mix(in srgb, var(--volt) 26%, var(--line)); }

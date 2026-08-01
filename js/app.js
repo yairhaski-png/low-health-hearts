@@ -2,7 +2,7 @@
   "use strict";
 
   const KEY = "kesher-state";
-  const SCHEMA = 7;
+  const SCHEMA = 8;
   const CHART_DAYS = 14;
   // Minimum distance the phone must have moved for a ריצה workout to count.
   const RUN_MIN_METERS_PER_10MIN = 600;
@@ -50,6 +50,35 @@
   const BONUS_REFRESH_MS = 8 * 60 * 60 * 1000; // 8 hours
   const BONUS_MULTIPLIER = 1.5;
 
+  // ---------- Auto difficulty ----------
+  // Comfortable seconds-per-rep for each exercise. Finishing faster than this
+  // twice in a row means the target is too easy for you now.
+  const EASY_PACE = {
+    squat: 2.2,
+    pushup: 2.5,
+    jack: 0.95,
+    lunge: 2.5,
+    highknee: 0.5,
+    situp: 2.2,
+    bridge: 2.0,
+    dip: 2.5,
+    squatjump: 2.0,
+  };
+  const EASY_RUNS_TO_LEVEL_UP = 2; // consecutive easy sessions before a bump
+  const LEVEL_UP_RATIO = 1.15; // +15% each time
+  const MAX_TARGET_RATIO = 3; // never grow past 3x the original target
+
+  // ---------- App gate ----------
+  const GATE_PASS_MS = 10 * 60 * 1000; // 10 minutes of access per unlock
+  const GATE_TASK = {
+    id: "gatetask",
+    title: "שכיבות סמיכה",
+    verify: "camera",
+    exercise: "pushup",
+    target: 10,
+    points: 4,
+  };
+
   const BASE_STORE = [
     { id: "r1", title: "שעה של גיימינג", cost: 60 },
     { id: "r2", title: "פרק בסדרה", cost: 45 },
@@ -89,6 +118,8 @@
       excuseHistory: [],
       bonus: { pickedAt: 0, ids: [], doneIds: [] },
       lastNudgeAt: 0,
+      adapt: {},
+      gate: { until: 0, unlocks: 0 },
     };
   }
 
@@ -115,6 +146,12 @@
       saved.excuseHistory = saved.excuseHistory || [];
       saved.bonus = saved.bonus || { pickedAt: 0, ids: [], doneIds: [] };
       saved.lastNudgeAt = saved.lastNudgeAt || 0;
+      saved.adapt = saved.adapt || {};
+      saved.gate = saved.gate || { until: 0, unlocks: 0 };
+      // Remember where each challenge started so auto-difficulty has a floor.
+      for (const c of saved.challenges) {
+        if (c.baseTarget === undefined && c.target !== undefined) c.baseTarget = c.target;
+      }
       // Ensure new base challenges (wallsit) exist without duplicating anything the user had.
       const have = new Set(saved.challenges.map((c) => c.id));
       for (const base of BASE_CHALLENGES) {
@@ -211,6 +248,81 @@
       if (b > 0 && (!best || b > boostOf(best))) best = c;
     }
     return best;
+  }
+
+  // ---------- Auto difficulty ----------
+  // If you keep breezing through an exercise, the app quietly raises the bar.
+  // It only ever moves after two consecutive easy sessions, so one good day
+  // doesn't spike the target, and it never grows past 3x where it started.
+
+  function recordPace(c, reps, durationMs) {
+    if (!c || c.__bonus || c.__gate) return null; // bonus/gate runs don't retune the daily list
+    if (!reps || !durationMs || durationMs <= 0) return null;
+    const pace = EASY_PACE[c.exercise];
+    if (!pace) return null;
+
+    const secPerRep = durationMs / 1000 / reps;
+    const a = (state.adapt[c.id] = state.adapt[c.id] || { easy: 0, lastPace: null });
+    a.lastPace = Math.round(secPerRep * 10) / 10;
+
+    if (secPerRep < pace) a.easy += 1;
+    else a.easy = 0;
+
+    if (a.easy < EASY_RUNS_TO_LEVEL_UP) return null;
+
+    const live = state.challenges.find((x) => x.id === c.id);
+    if (!live) return null;
+    const base = live.baseTarget || live.target;
+    const ceiling = Math.round(base * MAX_TARGET_RATIO);
+    if (live.target >= ceiling) {
+      a.easy = 0;
+      return null;
+    }
+    const next = Math.min(ceiling, Math.max(live.target + 1, Math.round(live.target * LEVEL_UP_RATIO)));
+    if (next === live.target) {
+      a.easy = 0;
+      return null;
+    }
+    const from = live.target;
+    live.target = next;
+    a.easy = 0;
+    return { title: live.title, from, to: next };
+  }
+
+  function levelUpSheet(info) {
+    openSheet(
+      `<h2 class="sheet-title">עלית רמה</h2>
+       <p class="sheet-note">${esc(info.title)} נעשה לך קל - העליתי את היעד.</p>
+       <div class="levelup">
+         <span class="levelup-from" dir="ltr">${info.from}</span>
+         <span class="levelup-arrow" aria-hidden="true">→</span>
+         <span class="levelup-to" dir="ltr">${info.to}</span>
+       </div>
+       <div class="sheet-actions">
+         <button class="btn btn-fill" id="luOk">קדימה</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#luOk").onclick = closeSheet;
+      }
+    );
+  }
+
+  // ---------- App gate ----------
+
+  const gateMsLeft = () => Math.max(0, (state.gate && state.gate.until ? state.gate.until : 0) - Date.now());
+  const gateOpen = () => gateMsLeft() > 0;
+
+  function grantGatePass() {
+    state.gate = state.gate || { until: 0, unlocks: 0 };
+    state.gate.until = Date.now() + GATE_PASS_MS;
+    state.gate.unlocks = (state.gate.unlocks || 0) + 1;
+    save();
+    render();
+  }
+
+  function mmss(ms) {
+    const total = Math.ceil(ms / 1000);
+    return String(Math.floor(total / 60)).padStart(2, "0") + ":" + String(total % 60).padStart(2, "0");
   }
 
   // ---------- Bonus slots ----------
@@ -386,6 +498,7 @@
     const streakVal = document.querySelector(".score-val.streak");
     if (streakVal) streakVal.classList.toggle("is-dead", state.streak === 0);
     renderNextUp();
+    renderGate();
     renderToday();
     renderBonus();
     renderNudge();
@@ -487,6 +600,66 @@
       main.onclick = goStart;
       list.appendChild(li);
     }
+  }
+
+  function renderGate() {
+    const box = $("gateState");
+    const btn = $("gateBtn");
+    const open = gateOpen();
+    box.className = "gate-state " + (open ? "is-open" : "is-shut");
+    box.innerHTML = open
+      ? `<svg class="ico"><use href="#i-unlock"/></svg>
+         <div class="gate-copy">
+           <span class="gate-big" id="gateClock" dir="ltr">${mmss(gateMsLeft())}</span>
+           <span class="gate-sub">נשאר לך זמן פתוח</span>
+         </div>`
+      : `<svg class="ico"><use href="#i-lock"/></svg>
+         <div class="gate-copy">
+           <span class="gate-big">נעול</span>
+           <span class="gate-sub">${state.gate && state.gate.unlocks ? `פתחת ${plural(state.gate.unlocks, "פעם", "פעמים")} עד היום` : "עוד לא פתחת היום"}</span>
+         </div>`;
+    btn.querySelector("span").textContent = open
+      ? "עוד 10 דקות (עוד 10 שכיבות)"
+      : "עשה 10 שכיבות כדי לפתוח";
+  }
+
+  function startGateTask() {
+    primeAudio();
+    openCamera({ ...GATE_TASK, __gate: true });
+  }
+
+  function gateHelpSheet() {
+    openSheet(
+      `<h2 class="sheet-title">איך נועלים את יוטיוב</h2>
+       <p class="sheet-note">
+         חשוב שתדע את האמת: <b>אתר לא יכול לחסום אפליקציות אחרות באייפון.</b>
+         אין שום דרך שקוד באתר יעצור את יוטיוב - אפל לא נותנת גישה כזאת לדפדפן, לאף אתר בעולם.
+       </p>
+       <p class="sheet-note">
+         אבל יש דרך אמיתית שכן עובדת, בעזרת אפליקציית <b>קיצורי דרך</b> של אפל:
+       </p>
+       <ol class="steps">
+         <li>פתח <b>קיצורי דרך</b> ← לשונית <b>אוטומציה</b> ← <b>+</b></li>
+         <li>בחר <b>אפליקציה</b> ← <b>בחר</b> ← סמן <b>YouTube</b> ← <b>נפתחת</b></li>
+         <li>בחר <b>הפעל מיד</b> (בלי לשאול)</li>
+         <li>הוסף פעולה <b>פתח אפליקציה</b> ← בחר <b>קשר</b></li>
+         <li>שמור</li>
+       </ol>
+       <p class="sheet-note">
+         מעכשיו, כל פעם שתפתח יוטיוב - האייפון יזרוק אותך לכאן. אם יש לך זמן פתוח, פשוט תחזור
+         ליוטיוב וזה שלך. אם לא - תעשה 10 שכיבות סמיכה מול המצלמה ותקבל 10 דקות.
+       </p>
+       <p class="sheet-note dim">
+         זה לא חסימה קשיחה - אפשר לחזור אחורה בלי לעשות כלום. זה חיכוך, וזה מספיק בשביל להפסיק
+         לגלול אוטומטית. לחסימה אמיתית צריך "זמן מסך" של אפל עם קוד שההורים מחזיקים.
+       </p>
+       <div class="sheet-actions">
+         <button class="btn btn-fill" id="ghOk">הבנתי</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#ghOk").onclick = closeSheet;
+      }
+    );
   }
 
   function renderBonus() {
@@ -876,7 +1049,15 @@
     toast(`אישור ידני - ${gained} נקודות (30%)`);
   }
 
-  function award(c, reps) {
+  function award(c, reps, durationMs) {
+    // The gate task pays a pass, not a place on the daily list.
+    if (c.__gate) {
+      grantGatePass();
+      cheer();
+      burstConfetti();
+      toast("נפתח ל-10 דקות");
+      return;
+    }
     const isBonus = !!c.__bonus;
     const doneList = isBonus ? (state.bonus.doneIds = state.bonus.doneIds || []) : state.doneToday;
     if (doneList.includes(c.id)) return;
@@ -918,10 +1099,18 @@
       state.penaltyDate = null;
     }
 
+    const levelUp = recordPace(c, reps, durationMs);
+
     save();
     render();
     cheer();
-    showWin(gained);
+    if (levelUp) {
+      burstConfetti();
+      setTimeout(() => levelUpSheet(levelUp), 900);
+      toast(`+${gained} נקודות`);
+    } else {
+      showWin(gained);
+    }
   }
 
   function buy(id) {
@@ -1296,6 +1485,9 @@
     let lastRepAt = Date.now();
     const stopUnlock = armManualUnlock(c, () => Date.now() - lastRepAt > MANUAL_UNLOCK_MS);
 
+    // Pace is measured from the first rep to the last, so fiddling with the
+    // phone before you start doesn't make you look slow.
+    let firstRepAt = null;
     let last = 0;
     try {
       const { startRepSession } = await import("./pose.js");
@@ -1308,6 +1500,7 @@
           if (count !== last) {
             last = count;
             lastRepAt = Date.now();
+            if (firstRepAt === null) firstRepAt = lastRepAt;
             cam.num.textContent = count;
             cam.num.classList.remove("pop");
             void cam.num.offsetWidth;
@@ -1322,7 +1515,9 @@
         onDone: (count) => {
           stopUnlock();
           closeCamera();
-          award(c, count);
+          // Only the reps after the first one have a measurable gap.
+          const span = firstRepAt ? Date.now() - firstRepAt : 0;
+          award(c, count, span && count > 1 ? span / (count - 1) * count : 0);
         },
         onError: (kind) => {
           releaseAwake();
@@ -1697,6 +1892,9 @@
   $("editRoutineBtn").onclick = routineSheet;
   $("openExcuseBtn").onclick = openExcuseSheet;
 
+  $("gateBtn").onclick = startGateTask;
+  $("gateHelpBtn").onclick = gateHelpSheet;
+
   $("rerollBtn").onclick = () => {
     rollBonus(true);
     save();
@@ -1730,6 +1928,29 @@
   save();
   render();
   maybeNag(false);
+
+  // Deep link from the Shortcuts automation: opening YouTube bounces here.
+  // With time left you're waved through; without it you go straight to the task.
+  if (/[?&]gate=1/.test(location.search)) {
+    if (gateOpen()) {
+      toast("יש לך עוד " + mmss(gateMsLeft()) + " - חזור ליוטיוב");
+    } else {
+      $("gatePanel").scrollIntoView({ block: "center" });
+      setTimeout(startGateTask, 400);
+    }
+  }
+
+  // Keep the gate countdown ticking without redrawing the whole app.
+  setInterval(() => {
+    const clock = $("gateClock");
+    if (clock) {
+      const left = gateMsLeft();
+      if (left <= 0) render(); // pass just expired - flip the panel to locked
+      else clock.textContent = mmss(left);
+    } else if (gateOpen()) {
+      render(); // a pass was granted elsewhere
+    }
+  }, 1000);
 
   // Keep the bonus countdown honest without re-rendering the whole app.
   setInterval(() => {
