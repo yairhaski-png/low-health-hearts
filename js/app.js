@@ -2,7 +2,8 @@
   "use strict";
 
   const KEY = "kesher-state";
-  const SCHEMA = 3;
+  const SCHEMA = 4;
+  const CHART_DAYS = 14;
 
   const today = () => new Date().toISOString().slice(0, 10);
   const dayGap = (a, b) =>
@@ -47,6 +48,8 @@
       store: BASE_STORE.map((s) => ({ ...s })),
       redeemed: [],
       lastDoneBy: {},
+      log: {},
+      bestStreak: 0,
       remindOn: false,
     };
   }
@@ -61,21 +64,29 @@
       saved = null;
     }
     if (!saved) return freshState();
+    if (saved.v === SCHEMA) return saved;
 
-    // Older versions shipped a different challenge set. Keep everything the
-    // user earned, replace only the parts the new version redefines.
-    if (saved.v !== SCHEMA) {
-      const base = freshState();
-      base.points = saved.points || 0;
-      base.totalEarned = saved.totalEarned || 0;
-      base.goal = saved.goal || "";
-      base.streak = saved.streak || 0;
-      base.redeemed = Array.isArray(saved.redeemed) ? saved.redeemed : [];
-      if (Array.isArray(saved.storeItems)) base.store = saved.storeItems;
-      else if (Array.isArray(saved.store)) base.store = saved.store;
-      return base;
+    // v3 only lacked the daily log, so migrate in place and keep the user's
+    // own challenges and rewards rather than resetting them.
+    if (saved.v === 3) {
+      saved.log = saved.log || {};
+      saved.bestStreak = saved.bestStreak || saved.streak || 0;
+      saved.v = SCHEMA;
+      return saved;
     }
-    return saved;
+
+    // Anything older predates the fitness challenge set entirely. Keep
+    // everything the user earned; take the new defaults for the rest.
+    const base = freshState();
+    base.points = saved.points || 0;
+    base.totalEarned = saved.totalEarned || 0;
+    base.goal = saved.goal || "";
+    base.streak = saved.streak || 0;
+    base.bestStreak = saved.streak || 0;
+    base.redeemed = Array.isArray(saved.redeemed) ? saved.redeemed : [];
+    if (Array.isArray(saved.storeItems)) base.store = saved.storeItems;
+    else if (Array.isArray(saved.store)) base.store = saved.store;
+    return base;
   }
 
   const save = () => localStorage.setItem(KEY, JSON.stringify(state));
@@ -149,6 +160,12 @@
 
   const clock = (s) =>
     String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+
+  // Hebrew takes the singular for exactly one.
+  const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
+  const workouts = (n) => plural(n, "אימון", "אימונים");
+  const pts = (n) => plural(n, "נקודה", "נקודות");
+  const reps = (n) => plural(n, "חזרה", "חזרות");
 
   // ---------- Sound ----------
   // Mid-rep you're looking at the floor, not the screen, so each counted rep
@@ -243,6 +260,7 @@
     renderNudge();
     renderGoal();
     renderStats();
+    renderProgress();
     renderTrain();
     renderStore();
     renderRemind();
@@ -316,8 +334,8 @@
     panel.hidden = false;
     const gap = daysSkipped(c);
     $("nudgeText").innerHTML =
-      `לא עשית <b>${esc(c.title)}</b> כבר ${gap} ימים, אז שווה עכשיו ` +
-      `<b>${worthOf(c)} נקודות</b> במקום ${c.points}. ככל שתמשיך לדלג, זה יעלה עוד.`;
+      `לא עשית <b>${esc(c.title)}</b> כבר ${plural(gap, "יום", "ימים")}, אז שווה עכשיו ` +
+      `<b>${pts(worthOf(c))}</b> במקום ${c.points}. ככל שתמשיך לדלג, זה יעלה עוד.`;
   }
 
   function renderGoal() {
@@ -327,12 +345,15 @@
     el.classList.toggle("is-empty", !has);
   }
 
+  // The lobby summarises today; all-time totals live on the points tab, so the
+  // two panels never repeat the same number.
   function renderStats() {
     const done = state.challenges.length - pending().length;
+    const t = state.log[today()] || { n: 0, p: 0, r: 0 };
     const cells = [
       [done + "/" + state.challenges.length, "אימונים היום"],
-      [state.totalEarned, "נקודות בסך הכל"],
-      [state.totalReps, "חזרות שנספרו"],
+      [t.p, "נקודות היום"],
+      [t.r, "חזרות היום"],
       [state.redeemed.length, "פרסים שקנית"],
     ];
     $("statsGrid").innerHTML = cells
@@ -341,6 +362,107 @@
           `<div class="stat"><span class="stat-val">${esc(String(v))}</span><span class="stat-key">${esc(k)}</span></div>`
       )
       .join("");
+  }
+
+  // ---------- Progress ----------
+
+  function lastDays(n) {
+    const out = [];
+    const now = new Date();
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      const e = state.log[key] || { n: 0, p: 0, r: 0 };
+      out.push({ key, date: d, n: e.n, p: e.p, r: e.r });
+    }
+    return out;
+  }
+
+  function renderProgress() {
+    $("ptsBalance").textContent = state.points;
+    $("ptsEarned").textContent = "צברת " + pts(state.totalEarned) + " מאז שהתחלת";
+
+    const days = lastDays(CHART_DAYS);
+    const peak = Math.max(...days.map((d) => d.p), 0);
+    const t = today();
+
+    const plot = $("chartPlot");
+    const axis = $("chartAxis");
+    plot.innerHTML = "";
+    axis.innerHTML = "";
+
+    for (const d of days) {
+      const isToday = d.key === t;
+      // Bars share one colour - height already encodes magnitude, so tinting
+      // by value would spend the colour channel on nothing.
+      const h = peak > 0 ? Math.round((d.p / peak) * 100) : 0;
+
+      const btn = document.createElement("button");
+      btn.className = "bar";
+      btn.type = "button";
+      btn.setAttribute(
+        "aria-label",
+        `${d.date.getDate()}/${d.date.getMonth() + 1}: ${pts(d.p)}, ${workouts(d.n)}`
+      );
+      const fill = document.createElement("span");
+      fill.className =
+        "bar-fill" + (d.p === 0 ? " is-zero" : "") + (isToday && d.p > 0 ? " is-today" : "");
+      fill.style.height = d.p === 0 ? "3px" : Math.max(6, h) + "%";
+      btn.appendChild(fill);
+      btn.onclick = () => pickDay(d, btn);
+      plot.appendChild(btn);
+
+      const tick = document.createElement("span");
+      if (isToday) tick.className = "is-today";
+      tick.textContent = d.date.getDate();
+      axis.appendChild(tick);
+    }
+
+    // Direct-label only what matters instead of a number on every bar.
+    const best = days.reduce((a, b) => (b.p > a.p ? b : a), days[0]);
+    const readout = $("chartReadout");
+    readout.classList.remove("is-live");
+    if (peak === 0) {
+      readout.textContent = "עוד אין נתונים. כל אימון שתסיים יופיע כאן.";
+    } else {
+      readout.textContent =
+        `היום הכי טוב שלך: ${best.date.getDate()}/${best.date.getMonth() + 1} עם ${pts(best.p)}`;
+    }
+
+    const tbody = $("chartTable").querySelector("tbody");
+    tbody.innerHTML = days
+      .map(
+        (d) =>
+          `<tr><td>${d.date.getDate()}/${d.date.getMonth() + 1}</td><td>${d.n}</td><td>${d.p}</td></tr>`
+      )
+      .join("");
+
+    const totalWorkouts = Object.values(state.log).reduce((s, e) => s + e.n, 0);
+    const recs = [
+      [state.streak, "רצף נוכחי"],
+      [state.bestStreak || 0, "הרצף הכי ארוך"],
+      [state.totalReps, "חזרות שנספרו"],
+      [totalWorkouts, "אימונים שהשלמת"],
+    ];
+    $("recordGrid").innerHTML = recs
+      .map(
+        ([v, k]) =>
+          `<div class="stat"><span class="stat-val">${esc(String(v))}</span><span class="stat-key">${esc(k)}</span></div>`
+      )
+      .join("");
+  }
+
+  function pickDay(d, btn) {
+    for (const b of document.querySelectorAll(".bar")) b.classList.remove("is-picked");
+    btn.classList.add("is-picked");
+    const readout = $("chartReadout");
+    readout.classList.add("is-live");
+    const label = `${d.date.getDate()}/${d.date.getMonth() + 1}`;
+    readout.textContent =
+      d.n === 0
+        ? `${label} — לא היה אימון`
+        : `${label} — ${workouts(d.n)}, ${pts(d.p)}${d.r ? `, ${reps(d.r)}` : ""}`;
   }
 
   function renderTrain() {
@@ -387,7 +509,7 @@
       li.innerHTML = `
         <div class="row-main">
           <span class="row-title">${esc(it.title)}</span>
-          <span class="row-sub">${it.cost} נקודות</span>
+          <span class="row-sub">${pts(it.cost)}</span>
         </div>
         <button class="buy"${can ? "" : " disabled"}>קנה</button>
         <button class="mini-x" aria-label="מחק"><svg class="ico"><use href="#i-close"/></svg></button>
@@ -429,12 +551,20 @@
       state.streak = state.lastDoneDate && dayGap(state.lastDoneDate, t) === 1 ? state.streak + 1 : 1;
       state.lastDoneDate = t;
     }
+    if (state.streak > (state.bestStreak || 0)) state.bestStreak = state.streak;
 
     state.points += gained;
     state.totalEarned += gained;
     if (reps) state.totalReps += reps;
     state.doneToday.push(c.id);
     state.lastDoneBy[c.id] = t;
+
+    // Daily log feeds the progress chart.
+    const day = (state.log[t] = state.log[t] || { n: 0, p: 0, r: 0 });
+    day.n += 1;
+    day.p += gained;
+    day.r += reps || 0;
+
     save();
     render();
     cheer();
@@ -766,7 +896,7 @@
 
   const views = {
     lobby: $("view-lobby"),
-    train: $("view-train"),
+    points: $("view-points"),
     store: $("view-store"),
   };
 

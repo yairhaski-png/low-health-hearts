@@ -151,17 +151,52 @@
 
     </section>
 
-    <!-- TRAIN -->
-    <section class="view" id="view-train" hidden>
+    <!-- POINTS + PROGRESS -->
+    <section class="view" id="view-points" hidden>
+
+      <section class="panel balance">
+        <span class="balance-key">הנקודות שלך</span>
+        <span class="balance-num" id="ptsBalance">0</span>
+        <span class="balance-sub" id="ptsEarned">צברת 0 נקודות מאז שהתחלת</span>
+      </section>
+
       <section class="panel">
         <div class="panel-head">
-          <h2 class="panel-title">האימונים שלך</h2>
+          <h2 class="panel-title">ההתקדמות שלך</h2>
+          <span class="panel-note">14 ימים אחרונים</span>
+        </div>
+
+        <p class="readout" id="chartReadout">גע בעמודה כדי לראות יום מסוים</p>
+
+        <div class="chart" id="chart">
+          <div class="chart-plot" id="chartPlot" role="img" aria-label="נקודות שצברת בכל אחד מ-14 הימים האחרונים"></div>
+          <div class="chart-axis" id="chartAxis" aria-hidden="true"></div>
+        </div>
+
+        <table class="a11y-table" id="chartTable">
+          <caption>נקודות לפי יום</caption>
+          <thead><tr><th>תאריך</th><th>אימונים</th><th>נקודות</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">שיאים</h2>
+        </div>
+        <div class="stats" id="recordGrid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">להרוויח עוד נקודות</h2>
           <button class="ghost-btn" id="addChallengeBtn" aria-label="הוסף אימון">
             <svg class="ico"><use href="#i-plus"/></svg>
           </button>
         </div>
         <ul class="rows" id="challengeList"></ul>
       </section>
+
     </section>
 
     <!-- STORE -->
@@ -192,8 +227,8 @@
     <button class="tab is-on" data-view="lobby">
       <svg class="ico"><use href="#i-home"/></svg><span>בית</span>
     </button>
-    <button class="tab" data-view="train">
-      <svg class="ico"><use href="#i-bolt"/></svg><span>אימונים</span>
+    <button class="tab" data-view="points">
+      <svg class="ico"><use href="#i-bolt"/></svg><span>נקודות</span>
     </button>
     <button class="tab" data-view="store">
       <svg class="ico"><use href="#i-bag"/></svg><span>חנות</span>
