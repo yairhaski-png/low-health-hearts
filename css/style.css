@@ -590,6 +590,17 @@ button { font: inherit; color: inherit; cursor: pointer; }
   pointer-events: none;
 }
 
+/* The room behind you can be any colour or brightness, so the counter carries
+   its own ground rather than trusting the camera feed to stay dark. */
+.cam-count::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(46% 30% at 50% 50%, rgba(0,0,0,0.62), transparent 72%);
+}
+
+.cam-num, .cam-of { position: relative; }
+
 /* Sized to be read from across the room - the phone is propped up on the
    floor while you're mid-rep, not held in your hand. */
 .cam-num {

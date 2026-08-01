@@ -193,6 +193,35 @@
     setTimeout(() => blip(1020, 190), 120);
   };
 
+  // ---------- Screen wake lock ----------
+  // A workout is minutes of not touching the phone, which is exactly when iOS
+  // dims and locks the screen. Hold the screen awake while one is running.
+
+  let wakeLock = null;
+
+  async function keepAwake() {
+    if (!("wakeLock" in navigator)) return;
+    try {
+      wakeLock = await navigator.wakeLock.request("screen");
+    } catch (e) {
+      wakeLock = null;
+    }
+  }
+
+  function releaseAwake() {
+    if (!wakeLock) return;
+    const w = wakeLock;
+    wakeLock = null;
+    w.release().catch(() => {});
+  }
+
+  // iOS drops the lock whenever the app goes to the background; take it back
+  // when the user returns and something is still running.
+  document.addEventListener("visibilitychange", () => {
+    const running = !$("camView").hidden || document.querySelector("#tClock");
+    if (!document.hidden && running && !wakeLock) keepAwake();
+  });
+
   // ---------- Toast ----------
 
   let toastTimer = null;
@@ -563,16 +592,21 @@
           btn.disabled = true;
           btn.textContent = "רץ";
           const started = Date.now();
+          keepAwake();
           tick = setInterval(() => {
             const left = Math.max(0, c.target - Math.floor((Date.now() - started) / 1000));
             face.textContent = clock(left);
             if (left === 0) {
               clearInterval(tick);
+              releaseAwake();
               onSheetClose = null;
               award(c, 0);
             }
           }, 200);
-          onSheetClose = () => clearInterval(tick);
+          onSheetClose = () => {
+            clearInterval(tick);
+            releaseAwake();
+          };
         };
       }
     );
@@ -600,6 +634,7 @@
       camStop();
       camStop = null;
     }
+    releaseAwake();
     cam.root.hidden = true;
     cam.video.srcObject = null;
     cam.depth.style.width = "0%";
@@ -608,11 +643,18 @@
   cam.close.onclick = closeCamera;
 
   async function openCamera(c) {
+    const firstRun = !state.sawCamera;
+
     cam.root.hidden = false;
+    keepAwake();
     cam.name.textContent = c.title;
     cam.num.textContent = "0";
     cam.of.textContent = "/ " + c.target;
-    cam.hint.textContent = "מכינים את המצלמה…";
+    // The detection engine is a one-time ~17MB download; say so rather than
+    // leaving a silent spinner on a slow connection.
+    cam.hint.textContent = firstRun
+      ? "מורידים את זיהוי התנועה, פעם אחת בלבד. עדיף על Wi-Fi…"
+      : "מכינים את המצלמה…";
     cam.depth.style.width = "0%";
     cam.manual.onclick = () => {
       closeCamera();
@@ -646,16 +688,23 @@
           award(c, count);
         },
         onError: (kind) => {
+          releaseAwake();
           if (kind === "camera") {
-            cam.hint.textContent = "אין גישה למצלמה. אפשר לאשר בהגדרות, או לסמן ידנית.";
+            // A known iOS quirk: the camera sometimes only works from Safari
+            // itself, not from the icon on the home screen.
+            cam.hint.textContent =
+              "אין גישה למצלמה. אשר בהגדרות, או פתח את האתר ישירות בספארי במקום מהאייקון.";
           } else if (kind === "model") {
-            cam.hint.textContent = "לא הצלחתי לטעון את זיהוי התנועה. נסה שוב או סמן ידנית.";
+            cam.hint.textContent = "לא הצלחתי לטעון את זיהוי התנועה. בדוק חיבור ונסה שוב.";
           } else {
             cam.hint.textContent = "משהו השתבש עם המצלמה. אפשר לסמן ידנית.";
           }
         },
       });
+      state.sawCamera = true;
+      save();
     } catch (err) {
+      releaseAwake();
       cam.hint.textContent = "זיהוי התנועה לא נתמך בדפדפן הזה. אפשר לסמן ידנית.";
     }
   }
