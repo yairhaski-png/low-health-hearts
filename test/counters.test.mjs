@@ -228,16 +228,17 @@ function kneeFrame(leftUp, rightUp) {
   check("framing hint fires when body is tiny in frame", /רחוק/.test(out.hint || ""), true);
 }
 {
+  // Running off the bottom edge is normal and must NOT block. An earlier
+  // version rejected it, which made whole exercises impossible to start.
   const step = COUNTERS.squat();
   const lm = blank();
   limb(lm, [23, 25, 27], 170, 0.5, 0.6);
-  // Push the feet below the bottom edge.
   lm[27] = { x: 0.5, y: 1.0, visibility: 1 };
   lm[28] = { x: 0.5, y: 1.0, visibility: 1 };
   lm[11] = { x: 0.45, y: 0.2, visibility: 1 };
   lm[12] = { x: 0.55, y: 0.2, visibility: 1 };
   const out = step(lm);
-  check("framing hint catches feet off-screen", /הרגליים יוצאות/.test(out.hint || ""), true);
+  check("feet at the bottom edge do not block", out.ready, true);
 }
 
 // ---- regression: a face-filling selfie must never count reps ----
@@ -283,6 +284,33 @@ function kneeFrame(leftUp, rightUp) {
     if (step(lm).rep) reps++;
   }
   check("real push-up framing still counts", reps, 4);
+}
+
+// ---- regression: real push-up setups run past the frame edges ----
+// Phone on the floor beside you puts hands and feet off-screen almost every
+// time. An earlier framing check treated that as "you're out of frame" and
+// blocked the exercise permanently.
+{
+  const step = COUNTERS.pushup();
+  let reps = 0;
+  let blocked = 0;
+  for (const a of cycle(80, 170, 4)) {
+    const lm = blank();
+    limb(lm, [11, 13, 15], a, 0.45, 0.45);
+    // Hips visible, but knees/ankles run off the right edge and the wrist
+    // sits hard against the bottom.
+    lm[23] = { x: 0.70, y: 0.60, visibility: 0.9 };
+    lm[24] = { x: 0.72, y: 0.60, visibility: 0.9 };
+    lm[25] = { x: 0.99, y: 0.70, visibility: 0.8 };
+    lm[27] = { x: 1.02, y: 0.78, visibility: 0.7 };
+    lm[26] = { x: 0.99, y: 0.72, visibility: 0.8 };
+    lm[28] = { x: 1.03, y: 0.80, visibility: 0.7 };
+    const out = step(lm);
+    if (out.rep) reps++;
+    if (out.ready === false) blocked++;
+  }
+  check("push-up counts with limbs past the frame edge", reps, 4);
+  check("push-up is never blocked by edge overflow", blocked, 0);
 }
 
 // ---- occlusion ----
