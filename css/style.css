@@ -619,6 +619,26 @@ button { font: inherit; color: inherit; cursor: pointer; }
   letter-spacing: 0.04em;
 }
 
+/* The slot you're heading into, and the one you've already blown. */
+.routine-item.is-next {
+  border-color: color-mix(in srgb, var(--volt) 40%, var(--line));
+}
+.routine-item.is-next .routine-time { color: var(--volt); }
+
+.routine-item.is-late {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn) 8%, var(--ink-3));
+}
+.routine-item.is-late .routine-time { color: var(--warn); }
+
+.routine-flag {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--bone-3);
+}
+.routine-item.is-late .routine-flag { color: var(--warn); }
+.routine-item.is-next .routine-flag { color: var(--volt); }
+
 /* ---------- Routine manager ---------- */
 
 .rt-list {

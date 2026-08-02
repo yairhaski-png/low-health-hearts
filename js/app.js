@@ -7,12 +7,17 @@
   // Minimum distance the phone must have moved for a ריצה workout to count.
   const RUN_MIN_METERS_PER_10MIN = 600;
 
+  // `workout: true` marks a slot the app will actually hold you to - those are
+  // the ones that trigger a nag when their time comes and goes.
   const DEFAULT_ROUTINE = [
     { id: "wake", label: "השכמה", time: "" },
-    { id: "morn", label: "אימון בוקר", time: "" },
-    { id: "eve", label: "אימון ערב", time: "" },
+    { id: "morn", label: "אימון בוקר", time: "", workout: true },
+    { id: "eve", label: "אימון ערב", time: "", workout: true },
     { id: "sleep", label: "שינה", time: "" },
   ];
+
+  // How late a scheduled workout has to be before the coach says something.
+  const SLOT_GRACE_MIN = 20;
 
   const DAY_SHORT = ["א", "ב", "ג", "ד", "ה", "ו", "ש"];
   const DAY_LONG = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
@@ -1242,6 +1247,39 @@
     return routineForToday() || rs[0] || null;
   }
 
+  const minsNow = () => {
+    const d = new Date();
+    return d.getHours() * 60 + d.getMinutes();
+  };
+  const parseHM = (t) => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(t || "");
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  };
+
+  /** Workout slots in today's routine, with their times resolved. */
+  function todaysSlots() {
+    const r = routineForToday();
+    if (!r) return [];
+    return r.items
+      .filter((i) => i.workout && parseHM(i.time) !== null)
+      .map((i) => ({ ...i, at: parseHM(i.time) }))
+      .sort((a, b) => a.at - b.at);
+  }
+
+  /** The next slot still ahead of you today. */
+  function nextSlot() {
+    const now = minsNow();
+    return todaysSlots().find((s) => s.at > now) || null;
+  }
+
+  /** A slot whose time has come and gone with nothing done. */
+  function overdueSlot() {
+    if (state.doneToday.length > 0) return null;
+    const now = minsNow();
+    const past = todaysSlots().filter((s) => now - s.at >= SLOT_GRACE_MIN);
+    return past.length ? past[past.length - 1] : null;
+  }
+
   function renderRoutine() {
     const rs = state.routines || [];
     const today = routineForToday();
@@ -1276,12 +1314,29 @@
     $("routineEmpty").hidden = !!shown;
     if (!shown) return;
 
+    // Only mark up/down state on the routine that actually governs today.
+    const isToday = today && shown.id === today.id;
+    const nxt = isToday ? nextSlot() : null;
+    const late = isToday ? overdueSlot() : null;
+
     for (const item of shown.items) {
       const li = document.createElement("li");
-      li.className = "routine-item";
+      const isNext = nxt && nxt.id === item.id;
+      const isLate = late && late.id === item.id;
+      li.className =
+        "routine-item" + (isNext ? " is-next" : "") + (isLate ? " is-late" : "");
+      const at = parseHM(item.time);
+      let note = "";
+      if (isLate) {
+        note = `<span class="routine-flag">עבר לפני ${plural(Math.round((minsNow() - at) / 60) || 1, "שעה", "שעות")}</span>`;
+      } else if (isNext) {
+        const left = at - minsNow();
+        note = `<span class="routine-flag">בעוד ${left >= 60 ? plural(Math.round(left / 60), "שעה", "שעות") : plural(left, "דקה", "דקות")}</span>`;
+      }
       li.innerHTML = `
         <span class="routine-time${item.time ? "" : " is-empty"}" dir="ltr">${esc(item.time || "לא נקבע")}</span>
         <span class="routine-key">${esc(item.label)}</span>
+        ${note}
       `;
       list.appendChild(li);
     }
@@ -2341,6 +2396,17 @@
   }
 
   function nagMessage() {
+    // A missed slot from your own schedule beats a generic nudge - it quotes
+    // the time you set for yourself.
+    const late = overdueSlot();
+    if (late) {
+      const mins = minsNow() - late.at;
+      const ago = mins >= 60 ? plural(Math.round(mins / 60), "שעה", "שעות") : plural(mins, "דקות", "דקות");
+      return {
+        title: late.label + " פספסת",
+        body: `קבעת ${late.label} ב-${late.time}. עברו ${ago} ואפס אימונים היום.`,
+      };
+    }
     const tier = nagTier();
     const line = tier.lines[Math.floor(Math.random() * tier.lines.length)];
     return { title: tier.title, body: line };
@@ -2439,8 +2505,9 @@
     if (todaysExcuse() && todaysExcuse().verdict === "legit") return; // he already told us why
     const now = Date.now();
     if (!force && now - (state.lastNudgeAt || 0) < NAG_COOLDOWN_MS) return;
-    // Before evening, only nag if he's actually been away for a day or more.
-    if (!force && new Date().getHours() < 17 && daysIdle() === 0) return;
+    // Before evening, stay quiet unless you've been gone a day OR you've
+    // actually blown a slot you scheduled yourself.
+    if (!force && new Date().getHours() < 17 && daysIdle() === 0 && !overdueSlot()) return;
     const m = nagMessage();
     fireNotification(m.title, m.body);
     state.lastNudgeAt = now;
