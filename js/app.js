@@ -2,7 +2,7 @@
   "use strict";
 
   const KEY = "kesher-state";
-  const SCHEMA = 10;
+  const SCHEMA = 11;
   const CHART_DAYS = 14;
   // Minimum distance the phone must have moved for a ריצה workout to count.
   const RUN_MIN_METERS_PER_10MIN = 600;
@@ -12,6 +12,7 @@
   const DEFAULT_ROUTINE = [
     { id: "wake", label: "השכמה", time: "" },
     { id: "morn", label: "אימון בוקר", time: "", workout: true },
+    { id: "noon", label: "אימון צוהריים", time: "", workout: true },
     { id: "eve", label: "אימון ערב", time: "", workout: true },
     { id: "sleep", label: "שינה", time: "" },
   ];
@@ -178,6 +179,14 @@
         saved.routines = rs;
       }
       saved.routinePick = saved.routinePick || null;
+      // New slots are folded into routines the user already set up, keeping
+      // every time they had entered.
+      for (const r of saved.routines) {
+        for (let i = 0; i < DEFAULT_ROUTINE.length; i++) {
+          const def = DEFAULT_ROUTINE[i];
+          if (!r.items.some((x) => x.id === def.id)) r.items.splice(i, 0, { ...def });
+        }
+      }
       // Remember where each challenge started so auto-difficulty has a floor.
       for (const c of saved.challenges) {
         if (c.baseTarget === undefined && c.target !== undefined) c.baseTarget = c.target;
@@ -1319,7 +1328,20 @@
     const nxt = isToday ? nextSlot() : null;
     const late = isToday ? overdueSlot() : null;
 
-    for (const item of shown.items) {
+    // Show the day in the order it actually happens. The stored order is the
+    // canonical one used by the editor, but a set time always wins over it,
+    // and slots with no time sink to the bottom.
+    const ordered = shown.items
+      .map((it, i) => ({ it, i, at: parseHM(it.time) }))
+      .sort((a, b) => {
+        if (a.at === null && b.at === null) return a.i - b.i;
+        if (a.at === null) return 1;
+        if (b.at === null) return -1;
+        return a.at - b.at || a.i - b.i;
+      })
+      .map((x) => x.it);
+
+    for (const item of ordered) {
       const li = document.createElement("li");
       const isNext = nxt && nxt.id === item.id;
       const isLate = late && late.id === item.id;
@@ -1485,14 +1507,46 @@
     }
   }
 
+  // Anything at or above this is worth a second tap - a misclick used to
+  // spend hundreds of hard-earned points with no confirmation and no undo.
+  const CONFIRM_COST = 100;
+
   function buy(id) {
     const it = state.store.find((x) => x.id === id);
     if (!it || state.points < it.cost) return;
+    if (it.cost >= CONFIRM_COST) {
+      confirmBuySheet(it);
+      return;
+    }
+    doBuy(it);
+  }
+
+  function doBuy(it) {
+    if (state.points < it.cost) return;
     state.points -= it.cost;
     state.redeemed.push({ title: it.title, cost: it.cost, date: today() });
     save();
     render();
     toast("קנית: " + it.title);
+  }
+
+  function confirmBuySheet(it) {
+    const left = state.points - it.cost;
+    openSheet(
+      `<h2 class="sheet-title">לקנות ${esc(it.title)}?</h2>
+       <p class="sheet-note">זה ${pts(it.cost)} מתוך ${state.points} שיש לך. יישארו לך ${pts(left)}.</p>
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="cbNo">לא עכשיו</button>
+         <button class="btn btn-fill" id="cbYes">כן, קונה</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#cbNo").onclick = closeSheet;
+        r.querySelector("#cbYes").onclick = () => {
+          doBuy(it);
+          closeSheet();
+        };
+      }
+    );
   }
 
   function showWin(pts) {
