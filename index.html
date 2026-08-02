@@ -190,6 +190,9 @@
           <span>יש לי תירוץ</span>
         </button>
         <div class="verdict" id="verdictBox" hidden></div>
+        <!-- Camera-only: proof has to be taken now, not picked from the gallery. -->
+        <input type="file" id="proofInput" accept="image/*" capture="environment" hidden />
+        <div class="proof-strip" id="proofStrip" hidden></div>
       </section>
 
       <section class="panel">
@@ -212,11 +215,16 @@
       <section class="panel routine">
         <div class="panel-head">
           <h2 class="panel-title">סדר יום</h2>
-          <button class="ghost-btn" id="editRoutineBtn" aria-label="ערוך סדר יום">
-            <svg class="ico"><use href="#i-pencil"/></svg>
-          </button>
+          <div class="head-row">
+            <span class="panel-note" id="routineToday">—</span>
+            <button class="ghost-btn" id="manageRoutinesBtn" aria-label="נהל סדרי יום">
+              <svg class="ico"><use href="#i-pencil"/></svg>
+            </button>
+          </div>
         </div>
+        <div class="seg" id="routineSeg" role="tablist"></div>
         <ul class="routine-list" id="routineList"></ul>
+        <p class="done-note" id="routineEmpty" hidden>אין סדר יום להיום. הוסף אחד.</p>
       </section>
 
       <section class="panel" id="remindPanel">

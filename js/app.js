@@ -2,7 +2,7 @@
   "use strict";
 
   const KEY = "kesher-state";
-  const SCHEMA = 9;
+  const SCHEMA = 10;
   const CHART_DAYS = 14;
   // Minimum distance the phone must have moved for a ריצה workout to count.
   const RUN_MIN_METERS_PER_10MIN = 600;
@@ -13,6 +13,18 @@
     { id: "eve", label: "אימון ערב", time: "" },
     { id: "sleep", label: "שינה", time: "" },
   ];
+
+  const DAY_SHORT = ["א", "ב", "ג", "ד", "ה", "ו", "ש"];
+  const DAY_LONG = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+
+  // Two schedules out of the box, because a school day and a weekend day are
+  // not the same day.
+  function defaultRoutines() {
+    return [
+      { id: "school", name: "יום לימודים", days: [0, 1, 2, 3, 4], items: DEFAULT_ROUTINE.map((r) => ({ ...r })) },
+      { id: "free", name: "סוף שבוע", days: [5, 6], items: DEFAULT_ROUTINE.map((r) => ({ ...r })) },
+    ];
+  }
 
   const today = () => new Date().toISOString().slice(0, 10);
   const dayGap = (a, b) =>
@@ -122,6 +134,8 @@
       gate: { until: 0, unlocks: 0 },
       playerName: "",
       boards: [],
+      routines: defaultRoutines(),
+      routinePick: null,
     };
   }
 
@@ -152,6 +166,13 @@
       saved.gate = saved.gate || { until: 0, unlocks: 0 };
       saved.playerName = saved.playerName || "";
       saved.boards = saved.boards || [];
+      // Carry a single old routine forward as the weekday schedule.
+      if (!saved.routines) {
+        const rs = defaultRoutines();
+        if (Array.isArray(saved.routine)) rs[0].items = saved.routine;
+        saved.routines = rs;
+      }
+      saved.routinePick = saved.routinePick || null;
       // Remember where each challenge started so auto-difficulty has a floor.
       for (const c of saved.challenges) {
         if (c.baseTarget === undefined && c.target !== undefined) c.baseTarget = c.target;
@@ -525,13 +546,32 @@
   function renderExcuse() {
     const box = $("verdictBox");
     const btn = $("openExcuseBtn");
+    const strip = $("proofStrip");
     const t = todaysExcuse();
+
+    // The coach's file on you: how much he's heard lately.
+    const hist = state.excuseHistory || [];
+    const recent = hist.filter((e) => dayGap(e.date, today()) <= 14).length;
+    const shots = hist.filter((e) => e.proof).slice(-6).reverse();
+    strip.hidden = shots.length === 0;
+    strip.innerHTML = shots
+      .map((e) => `<img class="proof-thumb" src="${e.proof}" alt="הוכחה מ-${esc(e.date)}" title="${esc(e.date)}" />`)
+      .join("");
+
     if (!t) {
-      box.hidden = true;
+      box.hidden = recent === 0;
+      if (recent > 0) {
+        box.className = "verdict " + (recent >= 3 ? "bad" : "warn");
+        box.textContent =
+          recent >= 3
+            ? `הוא זוכר ${recent} תירוצים שלך בשבועיים. הבא יישפט בהתאם.`
+            : `הוא זוכר ${plural(recent, "תירוץ", "תירוצים")} מהשבועיים האחרונים.`;
+      }
       btn.disabled = false;
       btn.querySelector("span").textContent = "יש לי תירוץ";
       return;
     }
+
     const tone = t.verdict === "legit" ? "good" : t.verdict === "weak" ? "warn" : "bad";
     const label =
       t.verdict === "legit" ? "בסדר גמור להיום"
@@ -539,7 +579,7 @@
       : "נקבע תירוץ - האימון הבא בפי 1.5";
     box.hidden = false;
     box.className = "verdict " + tone;
-    box.textContent = label;
+    box.textContent = label + (t.proof ? " · עם הוכחה" : "");
     btn.disabled = true;
     btn.querySelector("span").textContent = "תירוץ להיום כבר נרשם";
   }
@@ -1187,15 +1227,60 @@
         : `${label} — ${workouts(d.n)}, ${pts(d.p)}${d.r ? `, ${repCount(d.r)}` : ""}`;
   }
 
+  // Whichever routine claims today, unless you've tapped another tab to peek.
+  function routineForToday() {
+    const dow = new Date().getDay();
+    return (state.routines || []).find((r) => (r.days || []).includes(dow)) || null;
+  }
+
+  function shownRoutine() {
+    const rs = state.routines || [];
+    if (state.routinePick) {
+      const picked = rs.find((r) => r.id === state.routinePick);
+      if (picked) return picked;
+    }
+    return routineForToday() || rs[0] || null;
+  }
+
   function renderRoutine() {
+    const rs = state.routines || [];
+    const today = routineForToday();
+    const shown = shownRoutine();
+    const dow = new Date().getDay();
+
+    $("routineToday").textContent = today
+      ? `יום ${DAY_LONG[dow]} · ${today.name}`
+      : `יום ${DAY_LONG[dow]}`;
+
+    // Tabs only earn their space once there's more than one schedule.
+    const seg = $("routineSeg");
+    seg.hidden = rs.length < 2;
+    seg.innerHTML = rs
+      .map(
+        (r) =>
+          `<button class="seg-btn${shown && r.id === shown.id ? " is-on" : ""}" data-id="${esc(r.id)}">${esc(r.name)}${
+            today && r.id === today.id ? " ·" : ""
+          }</button>`
+      )
+      .join("");
+    for (const b of seg.querySelectorAll(".seg-btn")) {
+      b.onclick = () => {
+        state.routinePick = b.dataset.id;
+        save();
+        renderRoutine();
+      };
+    }
+
     const list = $("routineList");
     list.innerHTML = "";
-    for (const item of state.routine) {
+    $("routineEmpty").hidden = !!shown;
+    if (!shown) return;
+
+    for (const item of shown.items) {
       const li = document.createElement("li");
       li.className = "routine-item";
-      const time = item.time || "לא נקבע";
       li.innerHTML = `
-        <span class="routine-time${item.time ? "" : " is-empty"}" dir="ltr">${esc(time)}</span>
+        <span class="routine-time${item.time ? "" : " is-empty"}" dir="ltr">${esc(item.time || "לא נקבע")}</span>
         <span class="routine-key">${esc(item.label)}</span>
       `;
       list.appendChild(li);
@@ -1474,12 +1559,61 @@
     );
   }
 
+  // Shrinks a captured photo to a thumbnail before it ever touches storage -
+  // the full-size shot is never kept, and nothing leaves the device.
+  function shrinkPhoto(file, px = 128) {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, px / Math.max(img.width, img.height));
+        const cv = document.createElement("canvas");
+        cv.width = Math.max(1, Math.round(img.width * scale));
+        cv.height = Math.max(1, Math.round(img.height * scale));
+        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(url);
+        try {
+          resolve(cv.toDataURL("image/jpeg", 0.5));
+        } catch (e) {
+          resolve(null);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      };
+      img.src = url;
+    });
+  }
+
+  function askForPhoto() {
+    return new Promise((resolve) => {
+      const inp = $("proofInput");
+      inp.value = "";
+      let settled = false;
+      const finish = async (file) => {
+        if (settled) return;
+        settled = true;
+        inp.removeEventListener("change", onChange);
+        inp.removeEventListener("cancel", onCancel);
+        resolve(file ? await shrinkPhoto(file) : null);
+      };
+      const onChange = () => finish(inp.files && inp.files[0]);
+      // Backing out of the camera must clear the listener, otherwise a second
+      // attempt stacks another one on the same input.
+      const onCancel = () => finish(null);
+      inp.addEventListener("change", onChange);
+      inp.addEventListener("cancel", onCancel);
+      inp.click();
+    });
+  }
+
   async function openExcuseSheet() {
     if (todaysExcuse()) return; // one excuse per day is the whole point
-    const { classifyExcuse } = await import("./excuse.js");
+    const { judge } = await import("./excuse.js");
     openSheet(
       `<h2 class="sheet-title">מה קרה היום?</h2>
-       <p class="sheet-note">כתוב במשפט או שניים למה אתה לא מתאמן. תכתוב אמת.</p>
+       <p class="sheet-note">כתוב במשפט או שניים למה אתה לא מתאמן. תכתוב אמת - הוא זוכר מה אמרת בעבר.</p>
        <textarea class="field excuse-input" id="exIn" rows="3" placeholder="לדוגמה: יש לי חום ולא ישנתי"></textarea>
        <div class="sheet-actions">
          <button class="btn btn-quiet" id="exNo">ביטול</button>
@@ -1489,11 +1623,21 @@
         const inp = r.querySelector("#exIn");
         inp.focus();
         r.querySelector("#exNo").onclick = closeSheet;
-        r.querySelector("#exYes").onclick = () => {
+        r.querySelector("#exYes").onclick = async () => {
           const text = inp.value.trim();
           if (!text) return;
-          const v = classifyExcuse(text);
-          applyExcuse(text, v);
+          const v = judge(text, {
+            history: state.excuseHistory || [],
+            today: today(),
+            penaltyPending: activePenalty() > 1,
+          });
+
+          if (v.needsPhoto) {
+            closeSheet();
+            setTimeout(() => proofSheet(text, v), 50);
+            return;
+          }
+          applyExcuse(text, v, null);
           closeSheet();
           setTimeout(() => showExcuseVerdict(v), 50);
         };
@@ -1501,11 +1645,54 @@
     );
   }
 
-  function applyExcuse(text, v) {
+  // The coach asked for proof. Refusing is allowed, but it costs the claim.
+  function proofSheet(text, v) {
+    openSheet(
+      `<h2 class="sheet-title">תראה לי</h2>
+       <p class="sheet-note">${esc(v.notes.join(" "))}</p>
+       <p class="sheet-note">צלם עכשיו את מה שאתה מתאר - התמונה נשארת על המכשיר שלך בלבד ולא נשלחת לאף אחד.</p>
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="pfSkip">אין לי תמונה</button>
+         <button class="btn btn-fill" id="pfGo">פתח מצלמה</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#pfGo").onclick = async () => {
+          const thumb = await askForPhoto();
+          if (!thumb) return; // camera cancelled - stay on the sheet
+          applyExcuse(text, v, thumb);
+          closeSheet();
+          setTimeout(() => showExcuseVerdict(v), 50);
+        };
+        r.querySelector("#pfSkip").onclick = () => {
+          // No proof means the serious claim isn't credited.
+          const denied = {
+            ...v,
+            verdict: "excuse",
+            penalty: 1.5,
+            label: "בלי הוכחה",
+            tone: "bad",
+            reply: "בלי תמונה אני לא יכול לקבל את זה. האימון הבא שווה 1.5.",
+          };
+          applyExcuse(text, denied, null);
+          closeSheet();
+          setTimeout(() => showExcuseVerdict(denied), 50);
+        };
+      }
+    );
+  }
+
+  function applyExcuse(text, v, proof) {
     const t = today();
     state.excuseHistory = state.excuseHistory || [];
-    state.excuseHistory.push({ date: t, text, verdict: v.verdict, penalty: v.penalty });
+    state.excuseHistory.push({ date: t, text, verdict: v.verdict, penalty: v.penalty, proof: proof || null });
+    // Keep the log short, and keep at most a few thumbnails - localStorage is
+    // small and a photo is by far the biggest thing in here.
     if (state.excuseHistory.length > 30) state.excuseHistory = state.excuseHistory.slice(-30);
+    const withProof = state.excuseHistory.filter((e) => e.proof);
+    if (withProof.length > 6) {
+      const drop = new Set(withProof.slice(0, withProof.length - 6));
+      for (const e of state.excuseHistory) if (drop.has(e)) e.proof = null;
+    }
     if (v.verdict === "legit") {
       // No penalty and the streak is protected for the day.
       state.penalty = 1.0;
@@ -1532,6 +1719,113 @@
        </div>`,
       (r) => {
         r.querySelector("#vOk").onclick = closeSheet;
+      }
+    );
+  }
+
+  function manageRoutinesSheet() {
+    const rs = state.routines || [];
+    const rows = rs
+      .map((r, i) => {
+        const days = (r.days || []).map((d) => DAY_SHORT[d]).join(" ") || "בלי ימים";
+        return `<li class="rt-row">
+          <button class="rt-main" data-edit="${i}">
+            <span class="rt-name">${esc(r.name)}</span>
+            <span class="rt-days">${esc(days)}</span>
+          </button>
+          <button class="mini-x" data-del="${i}" aria-label="מחק"><svg class="ico"><use href="#i-close"/></svg></button>
+        </li>`;
+      })
+      .join("");
+
+    openSheet(
+      `<h2 class="sheet-title">סדרי יום</h2>
+       <p class="sheet-note">אפשר להחזיק כמה סדרים - למשל יום לימודים וסוף שבוע - ולשייך לכל אחד ימים.</p>
+       <ul class="rt-list">${rows || '<li class="done-note">אין סדרי יום</li>'}</ul>
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="rmClose">סגור</button>
+         <button class="btn btn-fill" id="rmNew">סדר חדש</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#rmClose").onclick = closeSheet;
+        r.querySelector("#rmNew").onclick = () => editRoutineSheet(null);
+        for (const b of r.querySelectorAll("[data-edit]")) {
+          b.onclick = () => editRoutineSheet(Number(b.dataset.edit));
+        }
+        for (const b of r.querySelectorAll("[data-del]")) {
+          b.onclick = () => {
+            state.routines.splice(Number(b.dataset.del), 1);
+            state.routinePick = null;
+            save();
+            render();
+            manageRoutinesSheet();
+          };
+        }
+      }
+    );
+  }
+
+  function editRoutineSheet(index) {
+    const isNew = index === null;
+    const r = isNew
+      ? { id: uid("rt"), name: "", days: [], items: DEFAULT_ROUTINE.map((x) => ({ ...x })) }
+      : JSON.parse(JSON.stringify(state.routines[index]));
+
+    const dayBtns = DAY_SHORT.map(
+      (d, i) =>
+        `<button class="day-btn${r.days.includes(i) ? " is-on" : ""}" data-day="${i}" type="button">${d}</button>`
+    ).join("");
+
+    const timeRows = r.items
+      .map(
+        (it) => `
+      <label class="routine-edit">
+        <span class="routine-edit-label">${esc(it.label)}</span>
+        <input class="field routine-edit-time" type="time" data-id="${esc(it.id)}" value="${esc(it.time || "")}" />
+      </label>`
+      )
+      .join("");
+
+    openSheet(
+      `<h2 class="sheet-title">${isNew ? "סדר יום חדש" : "עריכת סדר יום"}</h2>
+       <input class="field" id="rtName" maxlength="20" placeholder="שם, למשל: יום לימודים" value="${esc(r.name)}" />
+       <label class="field-label">באילו ימים</label>
+       <div class="day-row" id="rtDays">${dayBtns}</div>
+       ${timeRows}
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="rtNo">ביטול</button>
+         <button class="btn btn-fill" id="rtYes">שמור</button>
+       </div>`,
+      (root) => {
+        const picked = new Set(r.days);
+        for (const b of root.querySelectorAll(".day-btn")) {
+          b.onclick = () => {
+            const d = Number(b.dataset.day);
+            if (picked.has(d)) picked.delete(d);
+            else picked.add(d);
+            b.classList.toggle("is-on", picked.has(d));
+          };
+        }
+        root.querySelector("#rtNo").onclick = manageRoutinesSheet;
+        root.querySelector("#rtYes").onclick = () => {
+          const name = root.querySelector("#rtName").value.trim();
+          if (!name) return;
+          r.name = name;
+          r.days = [...picked].sort();
+          for (const inp of root.querySelectorAll(".routine-edit-time")) {
+            const it = r.items.find((x) => x.id === inp.dataset.id);
+            if (it) it.time = inp.value || "";
+          }
+          // A day can only belong to one routine, so claiming it takes it.
+          for (const other of state.routines) {
+            if (other.id !== r.id) other.days = (other.days || []).filter((d) => !r.days.includes(d));
+          }
+          if (isNew) state.routines.push(r);
+          else state.routines[index] = r;
+          save();
+          render();
+          manageRoutinesSheet();
+        };
       }
     );
   }
@@ -2176,7 +2470,7 @@
   $("goalText").onclick = goalSheet;
   $("addChallengeBtn").onclick = addChallengeSheet;
   $("addItemBtn").onclick = addRewardSheet;
-  $("editRoutineBtn").onclick = routineSheet;
+  $("manageRoutinesBtn").onclick = manageRoutinesSheet;
   $("openExcuseBtn").onclick = openExcuseSheet;
 
   $("myCardBtn").onclick = myCardSheet;

@@ -619,6 +619,82 @@ button { font: inherit; color: inherit; cursor: pointer; }
   letter-spacing: 0.04em;
 }
 
+/* ---------- Routine manager ---------- */
+
+.rt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--ink-3);
+  padding: 4px 8px 4px 4px;
+}
+
+.rt-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: none;
+  border: none;
+  padding: 9px 8px;
+  text-align: start;
+}
+.rt-name { font-weight: 600; font-size: 14.5px; }
+.rt-days { font-size: 12px; color: var(--bone-3); letter-spacing: 0.16em; }
+
+.day-row { display: flex; gap: 6px; }
+
+.day-btn {
+  flex: 1;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  border: 1px solid var(--line-hi);
+  background: var(--ink);
+  color: var(--bone-3);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 14px;
+  transition: background 0.15s ease-out, color 0.15s ease-out;
+}
+.day-btn.is-on {
+  background: var(--ember);
+  border-color: var(--ember);
+  color: #14100D;
+}
+
+/* ---------- Proof photos ---------- */
+
+.proof-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+.proof-strip::-webkit-scrollbar { display: none; }
+
+.proof-thumb {
+  width: 46px;
+  height: 46px;
+  flex: none;
+  border-radius: 9px;
+  object-fit: cover;
+  border: 1px solid var(--line-hi);
+  filter: saturate(0.85);
+}
+
 /* ---------- Breakdown (per-workout stats) ---------- */
 
 .breakdown-list {
