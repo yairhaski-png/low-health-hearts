@@ -112,8 +112,22 @@ const NEEDS = {
   squatjump: { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
   lunge:     { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
   wallsit:   { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
-  pushup:    { chain: [[L.shoulderL, L.elbowL, L.wristL], [L.shoulderR, L.elbowR, L.wristR]], also: [[L.hipL, L.hipR]] },
-  dip:       { chain: [[L.shoulderL, L.elbowL, L.wristL], [L.shoulderR, L.elbowR, L.wristR]], also: [[L.hipL, L.hipR]] },
+  // Push-ups demand both arms end to end - shoulder, elbow AND wrist on each
+  // side - so half-visible arms can't be passed off as a rep.
+  pushup: {
+    chain: [[L.shoulderL, L.elbowL, L.wristL], [L.shoulderR, L.elbowR, L.wristR]],
+    also: [[L.hipL, L.hipR]],
+    requireAll: [
+      [L.shoulderL, L.shoulderR],
+      [L.elbowL, L.elbowR],
+      [L.wristL, L.wristR],
+    ],
+  },
+  dip: {
+    chain: [[L.shoulderL, L.elbowL, L.wristL], [L.shoulderR, L.elbowR, L.wristR]],
+    also: [[L.hipL, L.hipR]],
+    requireAll: [[L.elbowL, L.elbowR], [L.wristL, L.wristR]],
+  },
   situp:     { chain: [[L.shoulderL, L.hipL, L.kneeL], [L.shoulderR, L.hipR, L.kneeR]], also: [] },
   bridge:    { chain: [[L.shoulderL, L.hipL, L.kneeL], [L.shoulderR, L.hipR, L.kneeR]], also: [] },
   jack:      { chain: [[L.shoulderL, L.wristL, L.ankleL], [L.shoulderR, L.wristR, L.ankleR]], also: [[L.hipL, L.hipR]] },
@@ -129,6 +143,55 @@ const PART_NAME = {
   [L.ankleL]: "קרסוליים", [L.ankleR]: "קרסוליים",
 };
 
+// Midpoint of a pair, using whichever side the camera can actually see.
+function midOf(lm, a, b) {
+  const va = lm[a] && (lm[a].visibility ?? 1) >= MIN_VISIBILITY;
+  const vb = lm[b] && (lm[b].visibility ?? 1) >= MIN_VISIBILITY;
+  if (va && vb) return { x: (lm[a].x + lm[b].x) / 2, y: (lm[a].y + lm[b].y) / 2 };
+  if (va) return { x: lm[a].x, y: lm[a].y };
+  if (vb) return { x: lm[b].x, y: lm[b].y };
+  return null;
+}
+
+/**
+ * Posture rules: is your body actually arranged the way this exercise
+ * requires, before we look at any joint angle?
+ *
+ * This is what stops "bend your elbows while sitting on the sofa" from
+ * reading as a push-up. The angle at the elbow is identical either way -
+ * what differs is that a real push-up has your torso horizontal.
+ */
+const POSTURE = {
+  pushup: (lm) => {
+    const sh = midOf(lm, L.shoulderL, L.shoulderR);
+    const hip = midOf(lm, L.hipL, L.hipR);
+    if (!sh || !hip) return null;
+    // Seen from the side, a plank separates shoulders and hips horizontally.
+    if (Math.abs(sh.x - hip.x) <= Math.abs(sh.y - hip.y)) {
+      return "שכב לפלאנק - הגוף צריך להיות אופקי מול המצלמה";
+    }
+    return null;
+  },
+  dip: (lm) => {
+    const sh = midOf(lm, L.shoulderL, L.shoulderR);
+    const hip = midOf(lm, L.hipL, L.hipR);
+    if (!sh || !hip) return null;
+    // Dips are upright: shoulders above hips.
+    if (sh.y > hip.y - 0.05) return "שב זקוף - הכתפיים מעל האגן";
+    return null;
+  },
+  squat: (lm) => {
+    const sh = midOf(lm, L.shoulderL, L.shoulderR);
+    const hip = midOf(lm, L.hipL, L.hipR);
+    if (!sh || !hip) return null;
+    if (sh.y > hip.y) return "עמוד זקוף מול המצלמה";
+    return null;
+  },
+};
+POSTURE.squatjump = POSTURE.squat;
+POSTURE.lunge = POSTURE.squat;
+POSTURE.wallsit = POSTURE.squat;
+
 /**
  * Decides whether this frame is good enough to judge a rep at all, and if
  * not, says which body part is missing. This is a hard gate, not advice.
@@ -138,6 +201,17 @@ function readiness(lm, exercise) {
   if (!need) return { ok: true, hint: null };
 
   const seen = (i) => lm[i] && (lm[i].visibility ?? 1) >= MIN_VISIBILITY;
+
+  // Some exercises need BOTH limbs fully in shot, not just the better side -
+  // you can't judge push-up form from one arm.
+  if (need.requireAll) {
+    for (const group of need.requireAll) {
+      const missing = group.find((i) => !seen(i));
+      if (missing !== undefined) {
+        return { ok: false, hint: `חייב לראות את שתי ה${PART_NAME[missing] || "גפיים"} במלואן` };
+      }
+    }
+  }
 
   // The measured triple has to be fully visible on one side of the body.
   const chain = need.chain.find((trio) => trio.every(seen));
@@ -151,10 +225,16 @@ function readiness(lm, exercise) {
       return { ok: false, hint: `צריך לראות גם את ה${PART_NAME[group[0]] || "גוף"} - התרחק מהטלפון` };
     }
   }
-  // Size sanity last: by here we know the right joints are visible, so this
-  // is only asking whether you're close enough to measure reliably.
+  // Size sanity: are you close enough to measure reliably?
   const frame = framingHint(lm);
   if (frame) return { ok: false, hint: frame };
+
+  // Finally, is the body actually in this exercise's posture?
+  const posture = POSTURE[exercise];
+  if (posture) {
+    const bad = posture(lm);
+    if (bad) return { ok: false, hint: bad };
+  }
 
   return { ok: true, hint: null };
 }
@@ -229,10 +309,18 @@ function makeSquatCounter() {
   };
 }
 
+// Minimum vertical travel of the shoulders during a push-up, as a fraction of
+// the frame. Bending your elbows without lowering your chest produces the same
+// elbow angle as a real rep, so the body has to actually move.
+const PUSHUP_MIN_TRAVEL = 0.035;
+
 function makePushupCounter() {
   let state = "up";
   let minAngle = 180;
   let shallowMsg = 0;
+  let noTravelMsg = 0;
+  let topY = null;   // shoulder height at the top of this rep
+  let lowY = null;   // lowest the shoulders reached during the descent
   return function step(lm) {
     const side = bestSide(
       lm,
@@ -245,32 +333,46 @@ function makePushupCounter() {
     const ang = angleAt(lm[side[0]], lm[side[1]], lm[side[2]]);
     if (ang === null) return { rep: false, hint: null, depth: 0, ready: false };
 
+    const sh = midOf(lm, L.shoulderL, L.shoulderR);
+    const shY = sh ? sh.y : null;
     const depth = Math.min(1, Math.max(0, (165 - ang) / 75));
 
     let rep = false;
     if (state === "up") {
+      if (shY !== null && (topY === null || shY < topY)) topY = shY;
       if (ang < minAngle) minAngle = ang;
-      if (ang < 100) state = "down";
-      else if (ang > 150 && minAngle < 140 && minAngle > 100) {
+      if (ang < 100) {
+        state = "down";
+        lowY = shY;
+      } else if (ang > 150 && minAngle < 140 && minAngle > 100) {
         shallowMsg = 60;
         minAngle = 180;
       }
-    } else if (ang > 150) {
-      state = "up";
-      minAngle = 180;
-      rep = true;
+    } else {
+      if (shY !== null && (lowY === null || shY > lowY)) lowY = shY;
+      if (ang > 150) {
+        // The elbows straightened - but did the chest actually travel?
+        const travel = topY !== null && lowY !== null ? lowY - topY : 0;
+        if (travel >= PUSHUP_MIN_TRAVEL) rep = true;
+        else noTravelMsg = 75;
+        state = "up";
+        minAngle = 180;
+        topY = shY;
+        lowY = null;
+      }
     }
 
     let hint = null;
-    if (!hint) {
-      if (shallowMsg > 0) {
-        shallowMsg--;
-        hint = "לא ירדת מספיק - כופף את המרפקים עד 90";
-      } else if (state === "down") {
-        hint = "יופי, עכשיו דחוף למעלה";
-      } else if (ang < 145) {
-        hint = "עוד קצת למטה";
-      }
+    if (noTravelMsg > 0) {
+      noTravelMsg--;
+      hint = "הגוף לא ירד - תוריד את החזה לרצפה";
+    } else if (shallowMsg > 0) {
+      shallowMsg--;
+      hint = "לא ירדת מספיק - כופף את המרפקים עד 90";
+    } else if (state === "down") {
+      hint = "יופי, עכשיו דחוף למעלה";
+    } else if (ang < 145) {
+      hint = "עוד קצת למטה";
     }
     return { rep, hint, depth, ready: true };
   };

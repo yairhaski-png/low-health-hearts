@@ -2,7 +2,7 @@
   "use strict";
 
   const KEY = "kesher-state";
-  const SCHEMA = 8;
+  const SCHEMA = 9;
   const CHART_DAYS = 14;
   // Minimum distance the phone must have moved for a ריצה workout to count.
   const RUN_MIN_METERS_PER_10MIN = 600;
@@ -120,6 +120,8 @@
       lastNudgeAt: 0,
       adapt: {},
       gate: { until: 0, unlocks: 0 },
+      playerName: "",
+      boards: [],
     };
   }
 
@@ -148,6 +150,8 @@
       saved.lastNudgeAt = saved.lastNudgeAt || 0;
       saved.adapt = saved.adapt || {};
       saved.gate = saved.gate || { until: 0, unlocks: 0 };
+      saved.playerName = saved.playerName || "";
+      saved.boards = saved.boards || [];
       // Remember where each challenge started so auto-difficulty has a floor.
       for (const c of saved.challenges) {
         if (c.baseTarget === undefined && c.target !== undefined) c.baseTarget = c.target;
@@ -849,6 +853,7 @@
 
     renderRecords();
     renderBreakdown();
+    renderBoards();
   }
 
   let recordFilter = "all";
@@ -913,6 +918,233 @@
       [avgPts, "ממוצע נקודות"],
       [c ? c.points : 0, "נקודות בסיס"],
     ];
+  }
+
+  // ---------- Leaderboards ----------
+
+  let Board = null; // lazily imported
+  async function board() {
+    if (!Board) Board = await import("./board.js");
+    return Board;
+  }
+
+  function myTotals() {
+    const workouts = Object.values(state.log).reduce((s, e) => s + e.n, 0);
+    return {
+      name: state.playerName || "אני",
+      points: state.totalEarned,
+      reps: state.totalReps,
+      streak: state.bestStreak || 0,
+      workouts,
+    };
+  }
+
+  async function renderBoards() {
+    const wrap = $("boardList");
+    const boards = state.boards || [];
+    $("boardsEmpty").hidden = boards.length > 0;
+    wrap.innerHTML = "";
+    if (!boards.length) return;
+
+    const B = await board();
+    const mine = myTotals();
+
+    boards.forEach((bd, bi) => {
+      const entries = B.rank([mine, ...bd.entries], bd.metric);
+      const label = (B.METRICS[bd.metric] || B.METRICS.points).label;
+      const sec = document.createElement("div");
+      sec.className = "board";
+      sec.innerHTML = `
+        <div class="board-head">
+          <span class="board-name"><svg class="ico"><use href="#i-trophy"/></svg>${esc(bd.name)}</span>
+          <span class="board-metric">${esc(label)}</span>
+        </div>
+        <ol class="board-rows"></ol>
+        <div class="board-actions">
+          <button class="mini-btn" data-add="${bi}">+ הוסף קוד</button>
+          <button class="mini-btn quiet" data-del="${bi}">מחק טבלה</button>
+        </div>
+      `;
+      const ol = sec.querySelector(".board-rows");
+      const key = (B.METRICS[bd.metric] || B.METRICS.points).key;
+      entries.forEach((e, i) => {
+        const isMe = e === mine;
+        const li = document.createElement("li");
+        li.className = "board-row" + (isMe ? " is-me" : "");
+        li.innerHTML = `
+          <span class="board-place${i === 0 ? " is-first" : ""}">${i + 1}</span>
+          <span class="board-who">${esc(e.name)}${isMe ? " (אתה)" : ""}</span>
+          <span class="board-score">${e[key] ?? 0}</span>
+        `;
+        ol.appendChild(li);
+      });
+      sec.querySelector("[data-add]").onclick = () => addEntrySheet(bi);
+      sec.querySelector("[data-del]").onclick = () => {
+        state.boards.splice(bi, 1);
+        save();
+        render();
+      };
+      wrap.appendChild(sec);
+    });
+  }
+
+  async function myCardSheet() {
+    const B = await board();
+    if (!state.playerName) {
+      openSheet(
+        `<h2 class="sheet-title">איך קוראים לך?</h2>
+         <p class="sheet-note">השם הזה יופיע בטבלאות של החברים שלך.</p>
+         <input class="field" id="pnIn" maxlength="18" placeholder="השם שלך" />
+         <div class="sheet-actions">
+           <button class="btn btn-quiet" id="pnNo">ביטול</button>
+           <button class="btn btn-fill" id="pnYes">המשך</button>
+         </div>`,
+        (r) => {
+          const inp = r.querySelector("#pnIn");
+          inp.focus();
+          r.querySelector("#pnNo").onclick = closeSheet;
+          r.querySelector("#pnYes").onclick = () => {
+            const v = inp.value.trim();
+            if (!v) return;
+            state.playerName = v;
+            save();
+            closeSheet();
+            setTimeout(myCardSheet, 60);
+          };
+        }
+      );
+      return;
+    }
+
+    const code = B.makeCard(myTotals());
+    openSheet(
+      `<h2 class="sheet-title">הקוד שלך</h2>
+       <p class="sheet-note">שלח את זה לחברים בוואטסאפ. הם מדביקים אותו בטבלה שלהם ואתה מופיע בדירוג.</p>
+       <div class="code-box" id="codeBox" dir="ltr">${esc(code)}</div>
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="ccName">שנה שם</button>
+         <button class="btn btn-fill" id="ccCopy">העתק</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#ccName").onclick = () => {
+          state.playerName = "";
+          save();
+          closeSheet();
+          setTimeout(myCardSheet, 60);
+        };
+        r.querySelector("#ccCopy").onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(code);
+            toast("הקוד הועתק");
+          } catch (e) {
+            // Clipboard is blocked in some contexts; select it so a long-press
+            // copy still works instead of leaving a dead button.
+            const el = r.querySelector("#codeBox");
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            const sel = getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            toast("סמן והעתק ידנית");
+          }
+          closeSheet();
+        };
+      }
+    );
+  }
+
+  async function newBoardSheet() {
+    const B = await board();
+    const opts = Object.entries(B.METRICS)
+      .map(([id, m], i) => `<option value="${id}"${i === 0 ? " selected" : ""}>${esc(m.label)}</option>`)
+      .join("");
+    openSheet(
+      `<h2 class="sheet-title">טבלה חדשה</h2>
+       <input class="field" id="bnIn" maxlength="24" placeholder="שם הטבלה, למשל: הכיתה" />
+       <label class="field-label">לפי מה מדרגים</label>
+       <select class="field" id="bmIn">${opts}</select>
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="bnNo">ביטול</button>
+         <button class="btn btn-fill" id="bnYes">צור</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#bnIn").focus();
+        r.querySelector("#bnNo").onclick = closeSheet;
+        r.querySelector("#bnYes").onclick = () => {
+          const name = r.querySelector("#bnIn").value.trim();
+          if (!name) return;
+          state.boards.push({
+            name,
+            metric: r.querySelector("#bmIn").value,
+            entries: [],
+          });
+          save();
+          render();
+          closeSheet();
+        };
+      }
+    );
+  }
+
+  async function addEntrySheet(bi) {
+    const B = await board();
+    openSheet(
+      `<h2 class="sheet-title">הוסף חבר</h2>
+       <p class="sheet-note">הדבק כאן את הקוד שהחבר שלך שלח.</p>
+       <textarea class="field excuse-input" id="cdIn" rows="3" dir="ltr" placeholder="K1.…"></textarea>
+       <p class="sheet-note dim" id="cdErr" hidden>הקוד לא תקין. בקש מהחבר לשלוח שוב.</p>
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="cdNo">ביטול</button>
+         <button class="btn btn-fill" id="cdYes">הוסף</button>
+       </div>`,
+      (r) => {
+        const inp = r.querySelector("#cdIn");
+        inp.focus();
+        r.querySelector("#cdNo").onclick = closeSheet;
+        r.querySelector("#cdYes").onclick = () => {
+          const card = B.readCard(inp.value);
+          if (!card) {
+            r.querySelector("#cdErr").hidden = false;
+            return;
+          }
+          const bd = state.boards[bi];
+          // Re-pasting a friend's newer card updates them instead of
+          // listing the same person twice.
+          const at = bd.entries.findIndex((e) => e.name === card.name);
+          if (at >= 0) bd.entries[at] = card;
+          else bd.entries.push(card);
+          save();
+          render();
+          closeSheet();
+          toast(at >= 0 ? "עודכן: " + card.name : "נוסף: " + card.name);
+        };
+      }
+    );
+  }
+
+  function boardHelpSheet() {
+    openSheet(
+      `<h2 class="sheet-title">למה אין טופ עולמי אמיתי</h2>
+       <p class="sheet-note">
+         טבלה עולמית אמיתית דורשת <b>שרת ומסד נתונים</b> שרצים 24/7 - מישהו צריך לתחזק ולשלם
+         עליהם. האפליקציה הזאת בכוונה בלי שרת בכלל, ולכן היא גם עובדת בלי אינטרנט ולא עולה כלום.
+       </p>
+       <p class="sheet-note">
+         במקום זה: כל אחד מייצר <b>קוד אישי</b> עם המספרים שלו, שולח בוואטסאפ, ואתה מדביק אותו
+         בטבלה. הדירוג מחושב אצלך במכשיר. אפשר ליצור כמה טבלאות שרוצים - לפי נקודות, חזרות,
+         רצף או מספר אימונים.
+       </p>
+       <p class="sheet-note dim">
+         שים לב: הקוד מוגן מפני שגיאות הקלדה, אבל לא מפני מישהו שמחליט לשקר במספרים שלו.
+         בין חברים זה בסדר. אם תרצה טבלה עולמית אמיתית - צריך להוסיף שרת, ואפשר לבנות את זה.
+       </p>
+       <div class="sheet-actions">
+         <button class="btn btn-fill" id="bhOk">הבנתי</button>
+       </div>`,
+      (r) => {
+        r.querySelector("#bhOk").onclick = closeSheet;
+      }
+    );
   }
 
   function renderBreakdown() {
@@ -1946,6 +2178,10 @@
   $("addItemBtn").onclick = addRewardSheet;
   $("editRoutineBtn").onclick = routineSheet;
   $("openExcuseBtn").onclick = openExcuseSheet;
+
+  $("myCardBtn").onclick = myCardSheet;
+  $("addBoardBtn").onclick = newBoardSheet;
+  $("boardHelpBtn").onclick = boardHelpSheet;
 
   $("gateBtn").onclick = startGateTask;
   $("gateHelpBtn").onclick = gateHelpSheet;

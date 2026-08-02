@@ -63,6 +63,15 @@
     <circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="1.8"/>
     <circle cx="12" cy="12" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/>
   </symbol>
+  <symbol id="i-share" viewBox="0 0 24 24">
+    <path d="M12 3.5v11.5M12 3.5 8.4 7.1M12 3.5l3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M6 12.5H4.8v7.2h14.4v-7.2H18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-trophy" viewBox="0 0 24 24">
+    <path d="M7.5 3.6h9v5.2a4.5 4.5 0 0 1-9 0z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+    <path d="M7.5 5.2H4.8v1.6a3 3 0 0 0 2.7 3M16.5 5.2h2.7v1.6a3 3 0 0 1-2.7 3" fill="none" stroke="currentColor" stroke-width="1.8"/>
+    <path d="M12 13.3v3.4M8.8 20.4h6.4l-.8-3.7H9.6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+  </symbol>
   <symbol id="i-help" viewBox="0 0 24 24">
     <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/>
     <path d="M9.6 9.3a2.5 2.5 0 1 1 3.2 2.4c-.6.2-.9.7-.9 1.3v.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
@@ -272,6 +281,26 @@
         </div>
         <div class="seg" id="recordSeg" role="tablist"></div>
         <div class="records" id="recordGrid"></div>
+      </section>
+
+      <section class="panel boards">
+        <div class="panel-head">
+          <h2 class="panel-title">טבלאות</h2>
+          <div class="head-row">
+            <button class="ghost-btn" id="boardHelpBtn" aria-label="איך זה עובד">
+              <svg class="ico"><use href="#i-help"/></svg>
+            </button>
+            <button class="ghost-btn" id="addBoardBtn" aria-label="טבלה חדשה">
+              <svg class="ico"><use href="#i-plus"/></svg>
+            </button>
+          </div>
+        </div>
+        <button class="wide-btn" id="myCardBtn">
+          <svg class="ico"><use href="#i-share"/></svg>
+          <span>הקוד שלי - לשלוח לחברים</span>
+        </button>
+        <div id="boardList"></div>
+        <p class="done-note" id="boardsEmpty">עוד לא יצרת טבלה. צור אחת והוסף קודים של חברים.</p>
       </section>
 
       <section class="panel breakdown">

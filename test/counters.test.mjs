@@ -77,15 +77,47 @@ function cycle(down, up, n, steps = 6) {
   check("squat ignores jitter at threshold", reps, 0);
 }
 
-// ---- push-ups: elbow angle (shoulder 11, elbow 13, wrist 15) ----
-{
-  const step = COUNTERS.pushup();
-  const reps = sweep(step, [11, 13, 15], cycle(80, 170, 4));
-  check("pushup counts 4 full reps", reps, 4);
+// shoulderY is the real shoulder height, independent of the elbow angle - so
+// a test can bend the arms while the body stays exactly where it was.
+// The elbow sits below the shoulder; the wrist swings to make the angle.
+function pushupFrame(elbowDeg, shoulderY, opts = {}) {
+  const lm = blank();
+  const off = opts.offEdge ? 0.34 : 0;
+  // Torso laid out horizontally: shoulders left of hips.
+  lm[11] = { x: 0.30, y: shoulderY,        visibility: 0.95 };
+  lm[12] = { x: 0.32, y: shoulderY + 0.02, visibility: 0.95 };
+  lm[23] = { x: 0.62, y: shoulderY + 0.06, visibility: 0.92 };
+  lm[24] = { x: 0.64, y: shoulderY + 0.08, visibility: 0.92 };
+  lm[25] = { x: 0.82 + off, y: shoulderY + 0.10, visibility: 0.85 };
+  lm[26] = { x: 0.84 + off, y: shoulderY + 0.12, visibility: 0.85 };
+  lm[27] = { x: 0.96 + off, y: shoulderY + 0.14, visibility: 0.8 };
+  lm[28] = { x: 0.98 + off, y: shoulderY + 0.16, visibility: 0.8 };
+
+  const r = rad(elbowDeg);
+  for (const [s, e, w, dx] of [[11, 13, 15, 0], [12, 14, 16, 0.02]]) {
+    const ex = lm[s].x + dx, ey = lm[s].y + 0.16;
+    lm[e] = { x: ex, y: ey, visibility: 0.9 };
+    lm[w] = {
+      x: ex + 0.16 * Math.sin(r),
+      y: ey - 0.16 * Math.cos(r),
+      visibility: 0.9,
+    };
+  }
+  return lm;
 }
+
+// Push-ups are covered by the dedicated form tests further down, which use a
+// realistic prone pose - the generic single-limb fixture can't satisfy the
+// posture and both-arms rules the exercise now enforces.
 {
+  // Half reps: elbows only reach 115 deg, never crossing the 100 deg mark.
   const step = COUNTERS.pushup();
-  const reps = sweep(step, [11, 13, 15], cycle(115, 170, 4));
+  let reps = 0;
+  for (let i = 0; i < 4; i++) {
+    for (const [a, y] of [[170, 0.40], [140, 0.42], [115, 0.43], [140, 0.42], [170, 0.40]]) {
+      if (step(pushupFrame(a, y)).rep) reps++;
+    }
+  }
   check("pushup ignores half reps", reps, 0);
 }
 
@@ -270,21 +302,6 @@ function kneeFrame(leftUp, rightUp) {
   check("selfie framing explains what's missing", sawRefusal, true);
 }
 
-// A proper side-on push-up with hips in shot still counts normally.
-{
-  const step = COUNTERS.pushup();
-  let reps = 0;
-  for (const a of cycle(80, 170, 4)) {
-    const lm = blank();
-    limb(lm, [11, 13, 15], a, 0.5, 0.45);
-    lm[23] = { x: 0.72, y: 0.62, visibility: 0.9 };
-    lm[24] = { x: 0.74, y: 0.62, visibility: 0.9 };
-    lm[25] = { x: 0.85, y: 0.70, visibility: 0.9 };
-    lm[27] = { x: 0.95, y: 0.78, visibility: 0.9 };
-    if (step(lm).rep) reps++;
-  }
-  check("real push-up framing still counts", reps, 4);
-}
 
 // ---- regression: real push-up setups run past the frame edges ----
 // Phone on the floor beside you puts hands and feet off-screen almost every
@@ -294,23 +311,63 @@ function kneeFrame(leftUp, rightUp) {
   const step = COUNTERS.pushup();
   let reps = 0;
   let blocked = 0;
-  for (const a of cycle(80, 170, 4)) {
-    const lm = blank();
-    limb(lm, [11, 13, 15], a, 0.45, 0.45);
-    // Hips visible, but knees/ankles run off the right edge and the wrist
-    // sits hard against the bottom.
-    lm[23] = { x: 0.70, y: 0.60, visibility: 0.9 };
-    lm[24] = { x: 0.72, y: 0.60, visibility: 0.9 };
-    lm[25] = { x: 0.99, y: 0.70, visibility: 0.8 };
-    lm[27] = { x: 1.02, y: 0.78, visibility: 0.7 };
-    lm[26] = { x: 0.99, y: 0.72, visibility: 0.8 };
-    lm[28] = { x: 1.03, y: 0.80, visibility: 0.7 };
-    const out = step(lm);
-    if (out.rep) reps++;
-    if (out.ready === false) blocked++;
+  for (let i = 0; i < 4; i++) {
+    for (const [a, y] of [[170, 0.40], [120, 0.44], [80, 0.47], [120, 0.44], [170, 0.40]]) {
+      const out = step(pushupFrame(a, y, { offEdge: true })); // knees/ankles past x=1
+      if (out.rep) reps++;
+      if (out.ready === false) blocked++;
+    }
   }
   check("push-up counts with limbs past the frame edge", reps, 4);
   check("push-up is never blocked by edge overflow", blocked, 0);
+}
+
+// ---- push-up form rules ----
+// A correct rep: both arms fully in shot, torso horizontal, chest travels.
+{
+  const step = COUNTERS.pushup();
+  let reps = 0;
+  for (let i = 0; i < 4; i++) {
+    // Chest genuinely drops 6% of the frame and comes back up.
+    for (const [a, y] of [[170, 0.40], [120, 0.44], [80, 0.47], [120, 0.44], [170, 0.40]]) {
+      if (step(pushupFrame(a, y)).rep) reps++;
+    }
+  }
+  check("push-up with real chest travel counts", reps, 4);
+}
+{
+  // Elbows hinge through the full range, but the body never lowers - the
+  // classic "do it sitting up" cheat.
+  const step = COUNTERS.pushup();
+  let reps = 0;
+  let toldWhy = false;
+  for (let i = 0; i < 4; i++) {
+    for (const a of [170, 120, 80, 120, 170]) {
+      const out = step(pushupFrame(a, 0.40));
+      if (out.rep) reps++;
+      if (/הגוף לא ירד/.test(out.hint || "")) toldWhy = true;
+    }
+  }
+  check("push-up without chest travel counts zero", reps, 0);
+  check("push-up explains the body never moved", toldWhy, true);
+}
+{
+  // One arm out of shot: not enough to judge form.
+  const step = COUNTERS.pushup();
+  const lm = pushupFrame(90, 0.45);
+  lm[14] = { ...lm[14], visibility: 0.1 };
+  lm[16] = { ...lm[16], visibility: 0.1 };
+  const out = step(lm);
+  check("push-up refuses with one arm hidden", out.ready, false);
+  check("push-up asks for both arms", /שתי/.test(out.hint || ""), true);
+}
+{
+  // Upright body, elbows bending: a push-up posture check must reject it.
+  const step = COUNTERS.pushup();
+  const lm = blank(); // blank() is a standing figure
+  limb(lm, [11, 13, 15], 90, 0.42, 0.40);
+  const out = step(lm);
+  check("push-up rejects an upright body", out.ready, false);
 }
 
 // ---- occlusion ----
