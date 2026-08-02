@@ -1,4 +1,4 @@
-const CACHE = "kesher-v7";
+const CACHE = "kesher-v8";
 const ASSETS = [
   "./",
   "./index.html",

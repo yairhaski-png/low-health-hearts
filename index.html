@@ -332,14 +332,24 @@
       <svg class="ico"><use href="#i-close"/></svg>
     </button>
     <div class="cam-name" id="camName">—</div>
+    <div class="cam-tally" id="camTally" hidden>
+      <span class="cam-num" id="camNum" dir="ltr">0</span>
+      <span class="cam-of" id="camOf" dir="ltr">/ 0</span>
+    </div>
   </header>
 
-  <div class="cam-count">
-    <div class="cam-num" id="camNum" dir="ltr">0</div>
-    <div class="cam-of" id="camOf" dir="ltr">/ 0</div>
+  <!-- Stage: brackets while positioning, countdown before the first rep.
+       Deliberately empty during counting so you can see your own form. -->
+  <div class="cam-stage" id="camStage">
+    <div class="frame-guide" id="frameGuide">
+      <span class="fg-corner tl"></span><span class="fg-corner tr"></span>
+      <span class="fg-corner bl"></span><span class="fg-corner br"></span>
+      <div class="fg-label" id="fgLabel">מחפש אותך…</div>
+    </div>
+    <div class="cam-countdown" id="camCountdown" hidden dir="ltr">3</div>
   </div>
 
-  <div class="cam-depth"><div class="cam-depth-fill" id="camDepth"></div></div>
+  <div class="cam-depth" id="camDepthWrap" hidden><div class="cam-depth-fill" id="camDepth"></div></div>
 
   <footer class="cam-bottom">
     <p class="cam-hint" id="camHint">מכינים את המצלמה…</p>

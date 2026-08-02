@@ -1427,12 +1427,53 @@
     canvas: $("camCanvas"),
     num: $("camNum"),
     of: $("camOf"),
+    tally: $("camTally"),
     name: $("camName"),
     hint: $("camHint"),
     depth: $("camDepth"),
+    depthWrap: $("camDepthWrap"),
     close: $("camClose"),
     manual: $("camManual"),
+    guide: $("frameGuide"),
+    guideLabel: $("fgLabel"),
+    countdown: $("camCountdown"),
   };
+
+  // Paints the camera overlay for one of the four session phases. Keeping
+  // this in one place is what stops the screen from ever showing a live
+  // count while the detector is refusing to judge the frame.
+  function paintCamPhase({ phase, hint, countdown }) {
+    const counting = phase === "counting";
+    const setup = phase === "setup";
+    const paused = phase === "paused";
+
+    cam.root.classList.toggle("is-paused", paused);
+    cam.tally.hidden = setup;
+    cam.depthWrap.hidden = !counting;
+    cam.guide.hidden = !(setup || paused);
+    cam.countdown.hidden = phase !== "countdown";
+
+    if (phase === "countdown" && countdown != null) {
+      const txt = String(countdown);
+      if (cam.countdown.textContent !== txt) {
+        cam.countdown.textContent = txt;
+        cam.countdown.classList.remove("cd-anim");
+        void cam.countdown.offsetWidth;
+        cam.countdown.classList.add("cd-anim");
+        blip(520 + (4 - countdown) * 90, 70);
+      }
+    }
+
+    if (setup || paused) {
+      const locked = !hint;
+      cam.guide.classList.toggle("is-locked", locked);
+      cam.guide.classList.toggle("is-searching", !locked);
+      cam.guideLabel.textContent = paused
+        ? "עצרנו - חזור למסגרת"
+        : locked ? "נעול, מתחילים" : "מחפש אותך…";
+    }
+    if (hint) cam.hint.textContent = hint;
+  }
 
   let camStop = null;
 
@@ -1443,8 +1484,11 @@
     }
     releaseAwake();
     cam.root.hidden = true;
+    cam.root.classList.remove("is-paused");
     cam.video.srcObject = null;
     cam.depth.style.width = "0%";
+    cam.countdown.hidden = true;
+    cam.manual.hidden = true;
   }
 
   cam.close.onclick = closeCamera;
@@ -1482,6 +1526,9 @@
       ? "מורידים את זיהוי התנועה, פעם אחת בלבד. עדיף על Wi-Fi…"
       : "מכינים את המצלמה…";
     cam.depth.style.width = "0%";
+    // Start in the setup look; the session flips this once it can see you.
+    paintCamPhase({ phase: "setup", hint: null });
+    cam.guideLabel.textContent = "מכינים את המצלמה…";
     let lastRepAt = Date.now();
     const stopUnlock = armManualUnlock(c, () => Date.now() - lastRepAt > MANUAL_UNLOCK_MS);
 
@@ -1496,7 +1543,7 @@
         canvas: cam.canvas,
         exercise: c.exercise,
         target,
-        onUpdate: ({ count, hint, depth, ready }) => {
+        onUpdate: ({ phase, count, hint, depth, ready, countdown }) => {
           if (count !== last) {
             last = count;
             lastRepAt = Date.now();
@@ -1509,8 +1556,10 @@
             if (navigator.vibrate) navigator.vibrate(28);
           }
           cam.depth.style.width = Math.round((depth || 0) * 100) + "%";
-          if (hint) cam.hint.textContent = hint;
-          else if (ready) cam.hint.textContent = "ממשיכים, אתה בקצב טוב";
+          if (!hint && ready && phase === "counting") {
+            cam.hint.textContent = "ממשיכים, אתה בקצב טוב";
+          }
+          paintCamPhase({ phase, hint, countdown });
         },
         onDone: (count) => {
           stopUnlock();
@@ -1550,6 +1599,8 @@
     cam.of.textContent = "/ " + target + " שניות";
     cam.hint.textContent = "מכינים את המצלמה…";
     cam.depth.style.width = "0%";
+    paintCamPhase({ phase: "setup", hint: null });
+    cam.guideLabel.textContent = "מכינים את המצלמה…";
     let holdingSince = null;
     const stopUnlock = armManualUnlock(c, () => !holdingSince || Date.now() - holdingSince > MANUAL_UNLOCK_MS);
 
@@ -1566,11 +1617,15 @@
           cam.depth.style.width = Math.min(100, (elapsed / target) * 100) + "%";
           if (holding) {
             if (holdingSince === null) holdingSince = Date.now();
-            cam.hint.textContent = hint || "יופי, החזק כך";
           } else {
             holdingSince = null;
-            cam.hint.textContent = hint || "רד לזווית של 90 מעלות";
           }
+          // A hold that isn't being held is a paused hold - show it as one
+          // rather than letting the seconds look like they're still ticking.
+          paintCamPhase({
+            phase: holding ? "counting" : "paused",
+            hint: hint || (holding ? "יופי, החזק כך" : "רד לזווית של 90 מעלות"),
+          });
         },
         onDone: () => {
           stopUnlock();

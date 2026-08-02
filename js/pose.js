@@ -93,6 +93,77 @@ function framingHint(lm) {
 }
 
 /**
+ * The joints each exercise genuinely needs before a rep can mean anything.
+ * `chain` is the measured triple (either side will do); `also` lists groups
+ * where at least one member must be visible.
+ *
+ * The `also` entries are what stop a face-filling selfie from registering
+ * reps: a push-up requires a hip in shot, a squat requires a shoulder. If the
+ * camera can only see your head, it now refuses to count instead of guessing.
+ */
+const NEEDS = {
+  squat:     { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
+  squatjump: { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
+  lunge:     { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
+  wallsit:   { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
+  pushup:    { chain: [[L.shoulderL, L.elbowL, L.wristL], [L.shoulderR, L.elbowR, L.wristR]], also: [[L.hipL, L.hipR]] },
+  dip:       { chain: [[L.shoulderL, L.elbowL, L.wristL], [L.shoulderR, L.elbowR, L.wristR]], also: [[L.hipL, L.hipR]] },
+  situp:     { chain: [[L.shoulderL, L.hipL, L.kneeL], [L.shoulderR, L.hipR, L.kneeR]], also: [] },
+  bridge:    { chain: [[L.shoulderL, L.hipL, L.kneeL], [L.shoulderR, L.hipR, L.kneeR]], also: [] },
+  jack:      { chain: [[L.shoulderL, L.wristL, L.ankleL], [L.shoulderR, L.wristR, L.ankleR]], also: [[L.hipL, L.hipR]] },
+  highknee:  { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
+};
+
+const PART_NAME = {
+  [L.shoulderL]: "כתפיים", [L.shoulderR]: "כתפיים",
+  [L.elbowL]: "מרפקים", [L.elbowR]: "מרפקים",
+  [L.wristL]: "כפות ידיים", [L.wristR]: "כפות ידיים",
+  [L.hipL]: "אגן", [L.hipR]: "אגן",
+  [L.kneeL]: "ברכיים", [L.kneeR]: "ברכיים",
+  [L.ankleL]: "קרסוליים", [L.ankleR]: "קרסוליים",
+};
+
+/**
+ * Decides whether this frame is good enough to judge a rep at all, and if
+ * not, says which body part is missing. This is a hard gate, not advice.
+ */
+function readiness(lm, exercise) {
+  const frame = framingHint(lm);
+  if (frame) return { ok: false, hint: frame };
+
+  const need = NEEDS[exercise];
+  if (!need) return { ok: true, hint: null };
+
+  const seen = (i) => lm[i] && (lm[i].visibility ?? 1) >= MIN_VISIBILITY;
+  const chainOk = need.chain.some((trio) => trio.every(seen));
+  if (!chainOk) {
+    const missing = need.chain[0].find((i) => !seen(i));
+    const part = PART_NAME[missing] || "הגוף";
+    return { ok: false, hint: `לא רואה את ה${part} - הזז את הטלפון` };
+  }
+  for (const group of need.also) {
+    if (!group.some(seen)) {
+      const part = PART_NAME[group[0]] || "הגוף";
+      return { ok: false, hint: `צריך לראות גם את ה${part} - התרחק מהטלפון` };
+    }
+  }
+  return { ok: true, hint: null };
+}
+
+/**
+ * Wraps a counter so it can never advance on a frame the camera can't judge.
+ * The inner state machine isn't even called while blocked, so its position is
+ * frozen rather than corrupted, and picks up where it left off.
+ */
+function guarded(exercise, inner) {
+  return function step(lm) {
+    const gate = readiness(lm, exercise);
+    if (!gate.ok) return { rep: false, hint: gate.hint, depth: 0, ready: false };
+    return inner(lm);
+  };
+}
+
+/**
  * Rep counters are two-threshold state machines. A rep is only counted on the
  * full return trip (down -> up), and the two thresholds are deliberately far
  * apart so camera jitter around a single value can't double-count.
@@ -459,7 +530,9 @@ function makeSquatJumpCounter() {
   };
 }
 
-export const COUNTERS = {
+// Every counter goes through `guarded`, so no exercise can count a rep on a
+// frame where the camera cannot actually see the relevant body parts.
+const RAW_COUNTERS = {
   squat: makeSquatCounter,
   pushup: makePushupCounter,
   jack: makeJackCounter,
@@ -471,8 +544,19 @@ export const COUNTERS = {
   squatjump: makeSquatJumpCounter,
 };
 
+export const COUNTERS = Object.fromEntries(
+  Object.entries(RAW_COUNTERS).map(([name, make]) => [name, () => guarded(name, make())])
+);
+
 export const HOLDS = {
-  wallsit: makeWallSitHold,
+  wallsit: () => {
+    const inner = makeWallSitHold();
+    return function step(lm) {
+      const gate = readiness(lm, "wallsit");
+      if (!gate.ok) return { holding: false, hint: gate.hint, angle: null, ready: false };
+      return inner(lm);
+    };
+  },
 };
 
 let landmarkerPromise = null;
@@ -601,6 +685,18 @@ export async function startRepSession({
     }
   }
 
+  // The session runs through explicit phases so the screen never shows a
+  // count while it can't actually see you:
+  //   setup     - waiting for good framing
+  //   countdown - framing held, 3..2..1 before the first rep counts
+  //   counting  - live
+  //   paused    - framing broke mid-set; the count freezes
+  const HOLD_FRAMES_TO_LOCK = 12; // ~0.4s of good framing before we commit
+  const COUNTDOWN_MS = 2600;
+  let phase = "setup";
+  let goodFrames = 0;
+  let countdownAt = 0;
+
   function frame() {
     if (stopped) return;
     rafId = requestAnimationFrame(frame);
@@ -623,22 +719,74 @@ export async function startRepSession({
     const lm = result && result.landmarks && result.landmarks[0];
     if (!lm) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      onUpdate && onUpdate({ count, hint: "לא רואה אותך - התרחק קצת מהמצלמה", depth: 0, ready: false });
+      goodFrames = 0;
+      if (phase === "counting" || phase === "countdown") phase = "paused";
+      onUpdate && onUpdate({
+        phase, count, target,
+        hint: "לא רואה אותך בכלל - התרחק כדי שכל הגוף ייכנס",
+        depth: 0, ready: false,
+      });
       return;
     }
 
-    drawSkeleton(lm);
     const out = step(lm);
+
+    // Only paint the skeleton once the pose is actually judgeable - a partial
+    // skeleton over a face close-up looks like the app is working when it
+    // isn't.
+    if (out.ready) drawSkeleton(lm);
+    else ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (out.ready) goodFrames += 1;
+    else goodFrames = 0;
+
+    if (phase === "setup") {
+      if (goodFrames >= HOLD_FRAMES_TO_LOCK) {
+        phase = "countdown";
+        countdownAt = performance.now();
+      }
+      onUpdate && onUpdate({ phase, count, target, hint: out.hint, depth: out.depth, ready: out.ready });
+      return;
+    }
+
+    if (phase === "countdown") {
+      if (!out.ready) {
+        phase = "setup";
+        onUpdate && onUpdate({ phase, count, target, hint: out.hint, depth: 0, ready: false });
+        return;
+      }
+      const left = COUNTDOWN_MS - (performance.now() - countdownAt);
+      if (left <= 0) phase = "counting";
+      onUpdate && onUpdate({
+        phase, count, target, hint: out.hint, depth: out.depth, ready: true,
+        countdown: Math.max(1, Math.ceil(left / 1000)),
+      });
+      return;
+    }
+
+    if (phase === "paused") {
+      if (goodFrames >= HOLD_FRAMES_TO_LOCK) phase = "counting";
+      onUpdate && onUpdate({ phase, count, target, hint: out.hint, depth: out.depth, ready: out.ready });
+      return;
+    }
+
+    // counting
+    if (!out.ready) {
+      phase = "paused";
+      onUpdate && onUpdate({ phase, count, target, hint: out.hint, depth: 0, ready: false });
+      return;
+    }
+
     if (out.rep) {
       count += 1;
       if (count >= target) {
-        onUpdate && onUpdate({ count, hint: null, depth: out.depth, ready: true });
+        onUpdate && onUpdate({ phase: "counting", count, target, hint: null, depth: out.depth, ready: true });
         stop();
         onDone && onDone(count);
         return;
       }
     }
-    onUpdate && onUpdate({ count, hint: out.hint, depth: out.depth, ready: out.ready });
+    onUpdate && onUpdate({ phase, count, target, hint: out.hint, depth: out.depth, ready: out.ready });
   }
 
   rafId = requestAnimationFrame(frame);

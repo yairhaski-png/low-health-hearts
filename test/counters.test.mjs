@@ -8,9 +8,20 @@ function check(name, got, want) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}: got ${got}, want ${want}`);
 }
 
-// Build a 33-slot landmark array with everything visible.
+// A plausibly-framed standing body, filling a sensible part of the frame.
+// Counters now hard-refuse frames they can't judge, so fixtures have to look
+// like a real person rather than a cloud of points at the centre.
 function blank() {
-  return Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 1 }));
+  const lm = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 1 }));
+  const put = (i, x, y) => { lm[i] = { x, y, visibility: 1 }; };
+  put(0,  0.50, 0.16);                      // nose
+  put(11, 0.42, 0.26); put(12, 0.58, 0.26); // shoulders
+  put(13, 0.38, 0.40); put(14, 0.62, 0.40); // elbows
+  put(15, 0.36, 0.53); put(16, 0.64, 0.53); // wrists
+  put(23, 0.45, 0.52); put(24, 0.55, 0.52); // hips
+  put(25, 0.45, 0.72); put(26, 0.55, 0.72); // knees
+  put(27, 0.45, 0.90); put(28, 0.55, 0.90); // ankles
+  return lm;
 }
 
 // Place a joint triple so the angle at the middle joint equals `deg`.
@@ -227,6 +238,51 @@ function kneeFrame(leftUp, rightUp) {
   lm[12] = { x: 0.55, y: 0.2, visibility: 1 };
   const out = step(lm);
   check("framing hint catches feet off-screen", /הרגליים יוצאות/.test(out.hint || ""), true);
+}
+
+// ---- regression: a face-filling selfie must never count reps ----
+// Reproduces a real screen recording where the counter climbed 0->9 while the
+// user just held the phone in front of their face and the app itself was
+// saying "can't see you".
+{
+  const step = COUNTERS.pushup();
+  let reps = 0;
+  let sawRefusal = false;
+  for (let i = 0; i < 200; i++) {
+    const lm = blank();
+    // Head and shoulders only, filling the frame - no hips, no legs.
+    lm[11] = { x: 0.30, y: 0.55, visibility: 0.95 };
+    lm[12] = { x: 0.70, y: 0.55, visibility: 0.95 };
+    // Elbows/wrists flicker in and out with the jitter a close-up produces.
+    const wobble = Math.sin(i / 3) * 0.25;
+    lm[13] = { x: 0.22, y: 0.75 + wobble, visibility: 0.7 };
+    lm[15] = { x: 0.18, y: 0.95 + wobble, visibility: 0.7 };
+    lm[14] = { x: 0.78, y: 0.75 - wobble, visibility: 0.7 };
+    lm[16] = { x: 0.82, y: 0.95 - wobble, visibility: 0.7 };
+    // Hips and below are out of shot entirely.
+    for (const j of [23, 24, 25, 26, 27, 28]) lm[j] = { x: 0.5, y: 0.5, visibility: 0.05 };
+    const out = step(lm);
+    if (out.rep) reps++;
+    if (out.ready === false && out.hint) sawRefusal = true;
+  }
+  check("selfie framing counts zero push-ups", reps, 0);
+  check("selfie framing explains what's missing", sawRefusal, true);
+}
+
+// A proper side-on push-up with hips in shot still counts normally.
+{
+  const step = COUNTERS.pushup();
+  let reps = 0;
+  for (const a of cycle(80, 170, 4)) {
+    const lm = blank();
+    limb(lm, [11, 13, 15], a, 0.5, 0.45);
+    lm[23] = { x: 0.72, y: 0.62, visibility: 0.9 };
+    lm[24] = { x: 0.74, y: 0.62, visibility: 0.9 };
+    lm[25] = { x: 0.85, y: 0.70, visibility: 0.9 };
+    lm[27] = { x: 0.95, y: 0.78, visibility: 0.9 };
+    if (step(lm).rep) reps++;
+  }
+  check("real push-up framing still counts", reps, 4);
 }
 
 // ---- occlusion ----
