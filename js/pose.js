@@ -108,13 +108,14 @@ function framingHint(lm) {
  * camera can only see your head, it now refuses to count instead of guessing.
  */
 const NEEDS = {
-  squat:     { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
-  squatjump: { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
-  lunge:     { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
-  wallsit:   { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
+  squat:     { label: "רגליים", chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
+  squatjump: { label: "רגליים", chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
+  lunge:     { label: "רגליים", chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
+  wallsit:   { label: "רגליים", chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
   // Push-ups demand both arms end to end - shoulder, elbow AND wrist on each
   // side - so half-visible arms can't be passed off as a rep.
   pushup: {
+    label: "ידיים",
     chain: [[L.shoulderL, L.elbowL, L.wristL], [L.shoulderR, L.elbowR, L.wristR]],
     also: [[L.hipL, L.hipR]],
     requireAll: [
@@ -124,14 +125,15 @@ const NEEDS = {
     ],
   },
   dip: {
+    label: "ידיים",
     chain: [[L.shoulderL, L.elbowL, L.wristL], [L.shoulderR, L.elbowR, L.wristR]],
     also: [[L.hipL, L.hipR]],
     requireAll: [[L.elbowL, L.elbowR], [L.wristL, L.wristR]],
   },
-  situp:     { chain: [[L.shoulderL, L.hipL, L.kneeL], [L.shoulderR, L.hipR, L.kneeR]], also: [] },
-  bridge:    { chain: [[L.shoulderL, L.hipL, L.kneeL], [L.shoulderR, L.hipR, L.kneeR]], also: [] },
-  jack:      { chain: [[L.shoulderL, L.wristL, L.ankleL], [L.shoulderR, L.wristR, L.ankleR]], also: [[L.hipL, L.hipR]] },
-  highknee:  { chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
+  situp:     { label: "גוף", chain: [[L.shoulderL, L.hipL, L.kneeL], [L.shoulderR, L.hipR, L.kneeR]], also: [] },
+  bridge:    { label: "גוף", chain: [[L.shoulderL, L.hipL, L.kneeL], [L.shoulderR, L.hipR, L.kneeR]], also: [] },
+  jack:      { label: "גוף מלא", chain: [[L.shoulderL, L.wristL, L.ankleL], [L.shoulderR, L.wristR, L.ankleR]], also: [[L.hipL, L.hipR]] },
+  highknee:  { label: "רגליים", chain: [[L.hipL, L.kneeL, L.ankleL], [L.hipR, L.kneeR, L.ankleR]], also: [[L.shoulderL, L.shoulderR]] },
 };
 
 const PART_NAME = {
@@ -198,45 +200,62 @@ POSTURE.wallsit = POSTURE.squat;
  */
 function readiness(lm, exercise) {
   const need = NEEDS[exercise];
-  if (!need) return { ok: true, hint: null };
+  if (!need) return { ok: true, hint: null, checks: [] };
 
   const seen = (i) => lm[i] && (lm[i].visibility ?? 1) >= MIN_VISIBILITY;
 
+  // Every requirement is evaluated, not just the first failure, so the screen
+  // can show a live checklist instead of one message at a time. `hint` still
+  // carries the most useful single thing to fix.
+  const checks = [];
+  let hint = null;
+  const fail = (msg) => {
+    if (!hint) hint = msg;
+  };
+
   // Some exercises need BOTH limbs fully in shot, not just the better side -
   // you can't judge push-up form from one arm.
+  let bothOk = true;
   if (need.requireAll) {
     for (const group of need.requireAll) {
       const missing = group.find((i) => !seen(i));
       if (missing !== undefined) {
-        return { ok: false, hint: `חייב לראות את שתי ה${PART_NAME[missing] || "גפיים"} במלואן` };
+        bothOk = false;
+        fail(`חייב לראות את שתי ה${PART_NAME[missing] || "גפיים"} במלואן`);
       }
     }
+    checks.push({ label: "שתי הגפיים", ok: bothOk });
   }
 
   // The measured triple has to be fully visible on one side of the body.
   const chain = need.chain.find((trio) => trio.every(seen));
+  checks.push({ label: need.label || "גוף", ok: !!chain });
   if (!chain) {
     const missing = need.chain[0].find((i) => !seen(i));
-    return { ok: false, hint: `לא רואה את ה${PART_NAME[missing] || "גוף"} - הזז את הטלפון` };
+    fail(`לא רואה את ה${PART_NAME[missing] || "גוף"} - הזז את הטלפון`);
   }
+
   // Plus the anchors that prove this is a body and not a face close-up.
   for (const group of need.also) {
-    if (!group.some(seen)) {
-      return { ok: false, hint: `צריך לראות גם את ה${PART_NAME[group[0]] || "גוף"} - התרחק מהטלפון` };
-    }
+    const ok = group.some(seen);
+    checks.push({ label: PART_NAME[group[0]] || "גוף", ok });
+    if (!ok) fail(`צריך לראות גם את ה${PART_NAME[group[0]] || "גוף"} - התרחק מהטלפון`);
   }
+
   // Size sanity: are you close enough to measure reliably?
   const frame = framingHint(lm);
-  if (frame) return { ok: false, hint: frame };
+  checks.push({ label: "מרחק", ok: !frame });
+  if (frame) fail(frame);
 
   // Finally, is the body actually in this exercise's posture?
   const posture = POSTURE[exercise];
   if (posture) {
-    const bad = posture(lm);
-    if (bad) return { ok: false, hint: bad };
+    const bad = chain ? posture(lm) : null;
+    checks.push({ label: "תנוחה", ok: !!chain && !bad });
+    if (bad) fail(bad);
   }
 
-  return { ok: true, hint: null };
+  return { ok: checks.every((c) => c.ok), hint, checks };
 }
 
 /**
@@ -247,8 +266,8 @@ function readiness(lm, exercise) {
 function guarded(exercise, inner) {
   return function step(lm) {
     const gate = readiness(lm, exercise);
-    if (!gate.ok) return { rep: false, hint: gate.hint, depth: 0, ready: false };
-    return inner(lm);
+    if (!gate.ok) return { rep: false, hint: gate.hint, depth: 0, ready: false, checks: gate.checks };
+    return { ...inner(lm), checks: gate.checks };
   };
 }
 
@@ -656,11 +675,50 @@ export const HOLDS = {
     const inner = makeWallSitHold();
     return function step(lm) {
       const gate = readiness(lm, "wallsit");
-      if (!gate.ok) return { holding: false, hint: gate.hint, angle: null, ready: false };
-      return inner(lm);
+      if (!gate.ok) return { holding: false, hint: gate.hint, angle: null, ready: false, checks: gate.checks };
+      return { ...inner(lm), checks: gate.checks };
     };
   },
 };
+
+// The skeleton is the main feedback while you are getting into position, so it
+// is ALWAYS drawn once a body is detected - an earlier version hid it until the
+// pose was countable, which left the setup screen blank at exactly the moment
+// it was most needed. Colour carries the state instead:
+//   dim white = seen, but not countable yet
+//   volt      = countable; this is what a rep will be judged from
+function drawSkeleton(ctx, canvas, lm, ready) {
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const colour = ready ? "#38E1D0" : "rgba(255,255,255,0.45)";
+  ctx.lineWidth = Math.max(2, w * (ready ? 0.007 : 0.005));
+  ctx.strokeStyle = colour;
+  ctx.fillStyle = colour;
+  ctx.lineCap = "round";
+  ctx.shadowColor = ready ? "rgba(56,225,208,0.55)" : "transparent";
+  ctx.shadowBlur = ready ? Math.max(6, w * 0.012) : 0;
+
+  for (const [a, b] of BONES) {
+    const pa = lm[a];
+    const pb = lm[b];
+    if (!pa || !pb) continue;
+    if ((pa.visibility ?? 1) < MIN_VISIBILITY || (pb.visibility ?? 1) < MIN_VISIBILITY) continue;
+    ctx.beginPath();
+    ctx.moveTo(pa.x * w, pa.y * h);
+    ctx.lineTo(pb.x * w, pb.y * h);
+    ctx.stroke();
+  }
+  const dotR = Math.max(3, w * (ready ? 0.010 : 0.008));
+  for (const i of Object.values(L)) {
+    const p = lm[i];
+    if (!p || (p.visibility ?? 1) < MIN_VISIBILITY) continue;
+    ctx.beginPath();
+    ctx.arc(p.x * w, p.y * h, dotR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+}
 
 let landmarkerPromise = null;
 
@@ -759,34 +817,6 @@ export async function startRepSession({
 
   const ctx = canvas.getContext("2d");
 
-  function drawSkeleton(lm) {
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
-    ctx.lineWidth = Math.max(2, w * 0.006);
-    ctx.strokeStyle = "#38E1D0";
-    ctx.fillStyle = "#38E1D0";
-    ctx.lineCap = "round";
-
-    for (const [a, b] of BONES) {
-      const pa = lm[a];
-      const pb = lm[b];
-      if (!pa || !pb) continue;
-      if ((pa.visibility ?? 1) < MIN_VISIBILITY || (pb.visibility ?? 1) < MIN_VISIBILITY) continue;
-      ctx.beginPath();
-      ctx.moveTo(pa.x * w, pa.y * h);
-      ctx.lineTo(pb.x * w, pb.y * h);
-      ctx.stroke();
-    }
-    const dotR = Math.max(3, w * 0.009);
-    for (const i of Object.values(L)) {
-      const p = lm[i];
-      if (!p || (p.visibility ?? 1) < MIN_VISIBILITY) continue;
-      ctx.beginPath();
-      ctx.arc(p.x * w, p.y * h, dotR, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
 
   // The session runs through explicit phases so the screen never shows a
   // count while it can't actually see you:
@@ -837,8 +867,7 @@ export async function startRepSession({
     // Only paint the skeleton once the pose is actually judgeable - a partial
     // skeleton over a face close-up looks like the app is working when it
     // isn't.
-    if (out.ready) drawSkeleton(lm);
-    else ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawSkeleton(ctx, canvas, lm, out.ready);
 
     if (out.ready) goodFrames += 1;
     else goodFrames = 0;
@@ -950,31 +979,6 @@ export async function startHoldSession({
 
   const ctx = canvas.getContext("2d");
 
-  function drawSkeleton(lm) {
-    const w = canvas.width, h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
-    ctx.lineWidth = Math.max(2, w * 0.006);
-    ctx.strokeStyle = "#38E1D0";
-    ctx.fillStyle = "#38E1D0";
-    ctx.lineCap = "round";
-    for (const [a, b] of BONES) {
-      const pa = lm[a], pb = lm[b];
-      if (!pa || !pb) continue;
-      if ((pa.visibility ?? 1) < MIN_VISIBILITY || (pb.visibility ?? 1) < MIN_VISIBILITY) continue;
-      ctx.beginPath();
-      ctx.moveTo(pa.x * w, pa.y * h);
-      ctx.lineTo(pb.x * w, pb.y * h);
-      ctx.stroke();
-    }
-    const dotR = Math.max(3, w * 0.009);
-    for (const i of Object.values(L)) {
-      const p = lm[i];
-      if (!p || (p.visibility ?? 1) < MIN_VISIBILITY) continue;
-      ctx.beginPath();
-      ctx.arc(p.x * w, p.y * h, dotR, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
 
   function frame() {
     if (stopped) return;
@@ -999,8 +1003,8 @@ export async function startHoldSession({
       onUpdate && onUpdate({ elapsed: elapsedMs / 1000, target, holding: false, hint: "לא רואה אותך" });
       return;
     }
-    drawSkeleton(lm);
     const out = step(lm);
+    drawSkeleton(ctx, canvas, lm, out.ready !== false);
     if (lastTick !== null && out.holding) elapsedMs += now - lastTick;
     lastTick = now;
     onUpdate && onUpdate({ elapsed: elapsedMs / 1000, target, holding: out.holding, hint: out.hint });

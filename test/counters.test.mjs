@@ -370,6 +370,37 @@ function kneeFrame(leftUp, rightUp) {
   check("push-up rejects an upright body", out.ready, false);
 }
 
+// ---- the live requirement checklist ----
+{
+  // A good push-up frame: everything the exercise needs is satisfied.
+  const step = COUNTERS.pushup();
+  const out = step(pushupFrame(150, 0.42));
+  check("all checks pass on a good frame", out.checks.every((c) => c.ok), true);
+  check("checklist covers every requirement", out.checks.map((c) => c.label).join(","),
+    "שתי הגפיים,ידיים,אגן,מרחק,תנוחה");
+}
+{
+  // One arm hidden: that single check fails, the rest still report.
+  const step = COUNTERS.pushup();
+  const lm = pushupFrame(150, 0.42);
+  lm[14] = { ...lm[14], visibility: 0.1 };
+  lm[16] = { ...lm[16], visibility: 0.1 };
+  const out = step(lm);
+  const byLabel = Object.fromEntries(out.checks.map((c) => [c.label, c.ok]));
+  check("hidden arm fails only the both-limbs check", byLabel["שתי הגפיים"], false);
+  check("the hip check still passes", byLabel["אגן"], true);
+  check("checks are reported even when blocked", out.checks.length > 1, true);
+}
+{
+  // Standing upright: posture is the thing that's wrong, and it says so.
+  const step = COUNTERS.pushup();
+  const lm = blank();
+  limb(lm, [11, 13, 15], 90, 0.42, 0.40);
+  const out = step(lm);
+  const byLabel = Object.fromEntries(out.checks.map((c) => [c.label, c.ok]));
+  check("upright body fails the posture check", byLabel["תנוחה"], false);
+}
+
 // ---- occlusion ----
 {
   const step = COUNTERS.squat();

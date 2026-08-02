@@ -2023,7 +2023,27 @@
   // Paints the camera overlay for one of the four session phases. Keeping
   // this in one place is what stops the screen from ever showing a live
   // count while the detector is refusing to judge the frame.
-  function paintCamPhase({ phase, hint, countdown }) {
+  // A live checklist of what the camera still needs, so you can watch each
+  // requirement flip to green as you move instead of guessing from one line
+  // of text.
+  function paintChecks(checks) {
+    const box = $("fgChecks");
+    if (!checks || !checks.length) {
+      box.innerHTML = "";
+      return;
+    }
+    const sig = checks.map((c) => c.label + (c.ok ? "1" : "0")).join("|");
+    if (box.dataset.sig === sig) return; // avoid rebuilding every frame
+    box.dataset.sig = sig;
+    box.innerHTML = checks
+      .map(
+        (c) =>
+          `<span class="fg-check${c.ok ? " is-ok" : ""}">${c.ok ? "✓" : "✕"} ${esc(c.label)}</span>`
+      )
+      .join("");
+  }
+
+  function paintCamPhase({ phase, hint, countdown, checks }) {
     const counting = phase === "counting";
     const setup = phase === "setup";
     const paused = phase === "paused";
@@ -2046,6 +2066,7 @@
     }
 
     if (setup || paused) {
+      paintChecks(checks);
       const locked = !hint;
       cam.guide.classList.toggle("is-locked", locked);
       cam.guide.classList.toggle("is-searching", !locked);
@@ -2124,7 +2145,7 @@
         canvas: cam.canvas,
         exercise: c.exercise,
         target,
-        onUpdate: ({ phase, count, hint, depth, ready, countdown }) => {
+        onUpdate: ({ phase, count, hint, depth, ready, countdown, checks }) => {
           if (count !== last) {
             last = count;
             lastRepAt = Date.now();
@@ -2140,7 +2161,7 @@
           if (!hint && ready && phase === "counting") {
             cam.hint.textContent = "ממשיכים, אתה בקצב טוב";
           }
-          paintCamPhase({ phase, hint, countdown });
+          paintCamPhase({ phase, hint, countdown, checks });
         },
         onDone: (count) => {
           stopUnlock();
@@ -2192,7 +2213,7 @@
         canvas: cam.canvas,
         hold: c.hold,
         target,
-        onUpdate: ({ elapsed, holding, hint }) => {
+        onUpdate: ({ elapsed, holding, hint, checks }) => {
           const secs = Math.floor(elapsed);
           cam.num.textContent = String(secs).padStart(2, "0");
           cam.depth.style.width = Math.min(100, (elapsed / target) * 100) + "%";
@@ -2206,6 +2227,7 @@
           paintCamPhase({
             phase: holding ? "counting" : "paused",
             hint: hint || (holding ? "יופי, החזק כך" : "רד לזווית של 90 מעלות"),
+            checks,
           });
         },
         onDone: () => {
