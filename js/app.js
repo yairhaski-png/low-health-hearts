@@ -2,7 +2,7 @@
   "use strict";
 
   const KEY = "kesher-state";
-  const SCHEMA = 11;
+  const SCHEMA = 12;
   const CHART_DAYS = 14;
   // Minimum distance the phone must have moved for a ריצה workout to count.
   const RUN_MIN_METERS_PER_10MIN = 600;
@@ -142,6 +142,8 @@
       boards: [],
       routines: defaultRoutines(),
       routinePick: null,
+      cloudSession: null,
+      showPhoto: true,
     };
   }
 
@@ -179,6 +181,8 @@
         saved.routines = rs;
       }
       saved.routinePick = saved.routinePick || null;
+      saved.cloudSession = saved.cloudSession || null;
+      if (saved.showPhoto === undefined) saved.showPhoto = true;
       // New slots are folded into routines the user already set up, keeping
       // every time they had entered.
       for (const r of saved.routines) {
@@ -908,6 +912,7 @@
     renderRecords();
     renderBreakdown();
     renderBoards();
+    renderWorld();
   }
 
   let recordFilter = "all";
@@ -972,6 +977,224 @@
       [avgPts, "ממוצע נקודות"],
       [c ? c.points : 0, "נקודות בסיס"],
     ];
+  }
+
+  // ---------- Worldwide leaderboard ----------
+  // Entirely optional: with js/cloud-config.js left blank this whole section
+  // stays inert and the local code-based boards are unaffected.
+
+  let Cloud = null;
+  async function cloud() {
+    if (!Cloud) Cloud = await import("./cloud.js");
+    return Cloud;
+  }
+
+  let worldMetric = "points";
+  let worldRows = [];
+
+  const session = () => state.cloudSession || null;
+
+  async function liveSession() {
+    const s = session();
+    if (!s) return null;
+    const C = await cloud();
+    const fresh = await C.refreshSession(s);
+    if (!fresh) {
+      // The refresh token died - drop it rather than retrying forever.
+      state.cloudSession = null;
+      save();
+      return null;
+    }
+    if (fresh.idToken !== s.idToken) {
+      state.cloudSession = fresh;
+      save();
+    }
+    return fresh;
+  }
+
+  async function renderWorld() {
+    const panel = $("worldPanel");
+    const C = await cloud().catch(() => null);
+    const configured = C && C.cloudReady();
+
+    const auth = $("worldAuth");
+    const me = $("worldMe");
+    const note = $("worldNote");
+
+    if (!configured) {
+      auth.hidden = false;
+      me.hidden = true;
+      $("gsiMount").innerHTML = "";
+      $("worldAuthText").textContent =
+        "הטבלה העולמית עוד לא מחוברת. יש הוראות הקמה קצרות ב-README תחת \"טופ עולמי\".";
+      note.textContent = "לא מחובר";
+      $("worldEmpty").hidden = false;
+      $("worldEmpty").textContent = "אחרי ההקמה הטבלה תופיע כאן אוטומטית.";
+      $("worldRows").innerHTML = "";
+      $("worldSeg").hidden = true;
+      return;
+    }
+
+    const s = session();
+    auth.hidden = !!s;
+    me.hidden = !s;
+    note.textContent = s ? "מחובר" : "לא מחובר";
+
+    if (s) {
+      $("meNick").textContent = state.playerName || s.suggestedNick || "בלי שם";
+      const photo = $("mePhoto");
+      if (s.photo && state.showPhoto !== false) {
+        photo.src = s.photo;
+        photo.hidden = false;
+      } else {
+        photo.hidden = true;
+      }
+    }
+
+    // Metric tabs
+    const seg = $("worldSeg");
+    seg.hidden = false;
+    const B = await board();
+    seg.innerHTML = Object.entries(B.METRICS)
+      .map(
+        ([id, m]) =>
+          `<button class="seg-btn${id === worldMetric ? " is-on" : ""}" data-m="${id}">${esc(m.label)}</button>`
+      )
+      .join("");
+    for (const b of seg.querySelectorAll(".seg-btn")) {
+      b.onclick = () => {
+        worldMetric = b.dataset.m;
+        // Light the tab straight away - loadWorld only repaints the rows, so
+        // without this the highlight lags a tab behind the data.
+        for (const o of seg.querySelectorAll(".seg-btn")) {
+          o.classList.toggle("is-on", o.dataset.m === worldMetric);
+        }
+        loadWorld();
+      };
+    }
+
+    paintWorldRows();
+  }
+
+  function paintWorldRows() {
+    const ol = $("worldRows");
+    const empty = $("worldEmpty");
+    empty.hidden = worldRows.length > 0;
+    ol.innerHTML = "";
+    const myUid = session() && session().uid;
+    const key = worldMetric;
+
+    worldRows.forEach((e, i) => {
+      const isMe = myUid && e.uid === myUid;
+      const li = document.createElement("li");
+      li.className = "board-row" + (isMe ? " is-me" : "");
+      li.innerHTML = `
+        <span class="board-place${i === 0 ? " is-first" : ""}">${i + 1}</span>
+        ${e.photo ? `<img class="row-photo" src="${esc(e.photo)}" alt="" referrerpolicy="no-referrer" />` : ""}
+        <span class="board-who">${esc(e.nick)}${isMe ? " (אתה)" : ""}</span>
+        <span class="board-score">${e[key] ?? 0}</span>
+      `;
+      ol.appendChild(li);
+    });
+
+    if (myUid) {
+      const at = worldRows.findIndex((e) => e.uid === myUid);
+      $("meRank").textContent =
+        at >= 0 ? `מקום ${at + 1} מתוך ${worldRows.length}` : "עוד לא בטבלה - פרסם את הציון";
+    }
+  }
+
+  async function loadWorld() {
+    const C = await cloud().catch(() => null);
+    if (!C || !C.cloudReady()) return;
+    $("worldEmpty").textContent = "טוען…";
+    $("worldEmpty").hidden = false;
+    try {
+      worldRows = await C.fetchTop(worldMetric, 50);
+      $("worldEmpty").textContent = "הטבלה ריקה. תהיה הראשון.";
+    } catch (err) {
+      worldRows = [];
+      $("worldEmpty").textContent = "לא הצלחתי לטעון את הטבלה. בדוק חיבור ונסה שוב.";
+    }
+    paintWorldRows();
+  }
+
+  async function doSignIn() {
+    const C = await cloud();
+    if (!C.cloudReady()) return;
+    try {
+      const s = await C.signInWithGoogle($("gsiMount"));
+      state.cloudSession = s;
+      if (!state.playerName && s.suggestedNick) state.playerName = s.suggestedNick;
+      save();
+      render();
+      toast("מחובר כ-" + (state.playerName || "בלי שם"));
+      await doPublish(true);
+      loadWorld();
+    } catch (err) {
+      toast(
+        err.message === "gis-load-failed"
+          ? "לא הצלחתי לטעון את ההתחברות של גוגל"
+          : "ההתחברות לא הושלמה"
+      );
+    }
+  }
+
+  async function doPublish(quiet) {
+    const C = await cloud().catch(() => null);
+    if (!C || !C.cloudReady()) return;
+    const s = await liveSession();
+    if (!s) {
+      if (!quiet) toast("צריך להתחבר קודם");
+      render();
+      return;
+    }
+    try {
+      const t = myTotals();
+      await C.publishScore(s, {
+        nick: state.playerName || s.suggestedNick || "בלי שם",
+        photo: state.showPhoto === false ? "" : s.photo,
+        points: t.points,
+        reps: t.reps,
+        streak: t.streak,
+        workouts: t.workouts,
+      });
+      if (!quiet) toast("פורסם");
+      await loadWorld();
+    } catch (err) {
+      if (!quiet) toast("הפרסום נכשל. נסה שוב.");
+    }
+  }
+
+  function nickSheet() {
+    openSheet(
+      `<h2 class="sheet-title">הניק שלך</h2>
+       <p class="sheet-note">זה מה שיוצג בטבלה העולמית. לא חייב להיות השם האמיתי שלך.</p>
+       <input class="field" id="nkIn" maxlength="18" value="${esc(state.playerName || "")}" placeholder="ניק" />
+       <label class="switch-row">
+         <span>להציג את תמונת הפרופיל מגוגל</span>
+         <input type="checkbox" id="nkPhoto" ${state.showPhoto === false ? "" : "checked"} />
+       </label>
+       <div class="sheet-actions">
+         <button class="btn btn-quiet" id="nkNo">ביטול</button>
+         <button class="btn btn-fill" id="nkYes">שמור</button>
+       </div>`,
+      (r) => {
+        const inp = r.querySelector("#nkIn");
+        inp.focus();
+        r.querySelector("#nkNo").onclick = closeSheet;
+        r.querySelector("#nkYes").onclick = async () => {
+          const v = inp.value.trim();
+          if (!v) return;
+          state.playerName = v;
+          state.showPhoto = r.querySelector("#nkPhoto").checked;
+          save();
+          render();
+          closeSheet();
+          await doPublish(true);
+        };
+      }
+    );
   }
 
   // ---------- Leaderboards ----------
@@ -1497,6 +1720,9 @@
 
     save();
     render();
+    // Keep the worldwide row current without the user thinking about it.
+    // Quiet, so a network hiccup never interrupts finishing a workout.
+    if (state.cloudSession) doPublish(true);
     cheer();
     if (levelUp) {
       burstConfetti();
@@ -2615,6 +2841,16 @@
   $("addItemBtn").onclick = addRewardSheet;
   $("manageRoutinesBtn").onclick = manageRoutinesSheet;
   $("openExcuseBtn").onclick = openExcuseSheet;
+
+  $("worldRefreshBtn").onclick = loadWorld;
+  $("publishBtn").onclick = () => doPublish(false);
+  $("editNickBtn").onclick = nickSheet;
+  $("signOutBtn").onclick = () => {
+    state.cloudSession = null;
+    save();
+    render();
+    toast("התנתקת");
+  };
 
   $("myCardBtn").onclick = myCardSheet;
   $("addBoardBtn").onclick = newBoardSheet;

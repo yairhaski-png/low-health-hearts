@@ -291,6 +291,44 @@
         <div class="records" id="recordGrid"></div>
       </section>
 
+      <section class="panel world" id="worldPanel">
+        <div class="panel-head">
+          <h2 class="panel-title">טופ עולמי</h2>
+          <div class="head-row">
+            <span class="panel-note" id="worldNote"></span>
+            <button class="ghost-btn" id="worldRefreshBtn" aria-label="רענן">
+              <svg class="ico"><use href="#i-refresh"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Signed out / not configured -->
+        <div id="worldAuth">
+          <p class="panel-body" id="worldAuthText">התחבר עם גוגל כדי להופיע בטבלה העולמית.</p>
+          <div id="gsiMount"></div>
+        </div>
+
+        <!-- Signed in -->
+        <div id="worldMe" hidden>
+          <div class="me-card">
+            <img class="me-photo" id="mePhoto" alt="" hidden />
+            <div class="me-copy">
+              <span class="me-nick" id="meNick">—</span>
+              <span class="me-rank" id="meRank">—</span>
+            </div>
+            <button class="mini-btn" id="editNickBtn">שנה ניק</button>
+          </div>
+          <div class="board-actions">
+            <button class="mini-btn" id="publishBtn">פרסם את הציון שלי</button>
+            <button class="mini-btn quiet" id="signOutBtn">התנתק</button>
+          </div>
+        </div>
+
+        <div class="seg" id="worldSeg" role="tablist"></div>
+        <ol class="board-rows" id="worldRows"></ol>
+        <p class="done-note" id="worldEmpty">עוד לא נטענה טבלה.</p>
+      </section>
+
       <section class="panel boards">
         <div class="panel-head">
           <h2 class="panel-title">טבלאות</h2>

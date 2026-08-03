@@ -163,6 +163,69 @@
 גלילה אוטומטית - וזה הכי חזק שאפשר בלי אפליקציה נייטיב. לחסימה קשיחה באמת: "זמן מסך" של
 אפל עם קוד שמישהו אחר מחזיק.
 
+## טופ עולמי (אופציונלי)
+
+הטבלה העולמית והתחברות עם גוגל **כבויות כברירת מחדל**. בלי הקמה, האפליקציה מתנהגת בדיוק
+כמו קודם והטבלאות המקומיות עם הקודים ממשיכות לעבוד. אין שום תלות בזה.
+
+כדי להפעיל צריך פרויקט Firebase משלך - בחינם, בערך חמש דקות:
+
+1. היכנס ל-[console.firebase.google.com](https://console.firebase.google.com) ← **Add project**
+2. **Build → Authentication → Sign-in method → Google → Enable**
+3. **Build → Firestore Database → Create database** (מצב Production)
+4. **Project settings → Your apps → Web** ← העתק את `apiKey` ו-`projectId`
+5. ב-Google Cloud Console ← **Credentials → OAuth 2.0 Client IDs → Web** ← העתק את ה-Client ID,
+   והוסף את הכתובת של האתר שלך תחת **Authorized JavaScript origins**
+6. מלא את שלושת הערכים ב-`js/cloud-config.js` ודחוף
+
+> ה-`apiKey` של Firebase **הוא לא סוד** - הוא נועד להיות ציבורי. מה שמגן על הנתונים זה
+> חוקי האבטחה למטה, ולכן חשוב להדביק גם אותם.
+
+### חוקי אבטחה (Firestore → Rules)
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    match /leaderboard/{uid} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.nick is string
+        && request.resource.data.nick.size() <= 18
+        && request.resource.data.points is int
+        && request.resource.data.points >= 0
+        && request.resource.data.points <= 1000000
+        && request.resource.data.reps is int
+        && request.resource.data.reps >= 0
+        && request.resource.data.streak is int
+        && request.resource.data.streak >= 0
+        && request.resource.data.streak <= 3650
+        && request.resource.data.workouts is int
+        && request.resource.data.workouts >= 0
+        // ציונים רק עולים, ולא יותר מקפיצה סבירה בכתיבה אחת
+        && (!exists(/databases/$(db)/documents/leaderboard/$(uid))
+            || (request.resource.data.points >= resource.data.points
+                && request.resource.data.points <= resource.data.points + 5000));
+    }
+  }
+}
+```
+
+החוקים האלה אומרים: כל אחד יכול **לקרוא** את הטבלה, אבל לכתוב - רק לשורה של עצמו, רק עם
+מספרים שלמים בטווח הגיוני, ורק כלפי מעלה. אי אפשר למחוק לאחרים או לקפוץ מ-0 למיליון.
+
+### מה נשלח החוצה
+
+רק מה שצריך לטבלה: **ניק** (לא חייב להיות השם האמיתי - אפשר לשנות בכל רגע), תמונת פרופיל
+מגוגל (**אפשר לכבות** בהגדרת הניק), ו-4 מספרים: נקודות, חזרות, רצף ואימונים.
+
+**לא נשלח:** שום תמונה מהמצלמה, שום וידאו, שום תירוץ, שום תמונת הוכחה, ושום מיקום.
+כל אלה נשארים על המכשיר בלבד, כמו קודם.
+
+**כנות לגבי רמאות:** הציון מגיע מהמכשיר, אז מי שמאוד רוצה יכול לזייף. חוקי האבטחה חוסמים
+את הקפיצות הגסות (ירידה בציון, מיליון נקודות בבת אחת), אבל לא הכל. בין חברים ובכיתה זה מספיק.
+
 ## הבטחה: אין דרך לרמות
 
 תרגילי מצלמה נספרים על ידי מנוע זיהוי תנועה שרץ מקומית - צריך באמת לזוז מול המצלמה כדי לצבור.

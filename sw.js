@@ -1,4 +1,4 @@
-const CACHE = "kesher-v14";
+const CACHE = "kesher-v15";
 const ASSETS = [
   "./",
   "./index.html",
@@ -8,6 +8,8 @@ const ASSETS = [
   "./js/excuse.js",
   "./js/gps.js",
   "./js/board.js",
+  "./js/cloud.js",
+  "./js/cloud-config.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
